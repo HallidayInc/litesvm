@@ -6,16 +6,14 @@ runtime used by the Rust and Node.js packages.
 
 ## Usage
 
-1. Generate the bindings (builds the shared library and emits `bindings/litesvm.ts`). The workspace ships a
-   patched `deno_bindgen` wrapper to avoid the upstream CLI hang on large outputs:
+1. Build the shared library for the bindings (the loader is inlined into `mod.ts`):
 
 ```bash
 cd crates/deno-litesvm
-CARGO_TARGET_DIR=../../target \
-  cargo run -p deno_bindgen_cli --manifest-path ../deno-bindgen-cli/Cargo.toml -- --out bindings/litesvm.ts
+make build
 ```
 
-2. Import the generated loader and start interacting with LiteSVM from Deno:
+2. Import the loader and start interacting with LiteSVM from Deno:
 
 ```ts
 import { LiteSvm } from "./mod.ts";
@@ -37,8 +35,7 @@ transactions end-to-end:
 
 ```bash
 cd crates/deno-litesvm
-CARGO_TARGET_DIR=../../target cargo build -p litesvm-deno
-deno test -A mod.test.ts
+make test
 ```
 
 The tests demonstrate constructing transactions with `npm:@solana/web3.js`, signing them, and
