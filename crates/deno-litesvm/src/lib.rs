@@ -179,7 +179,7 @@ impl From<SerializableAccount> for AccountSharedData {
 pub fn create_default() -> LiteSvmHandle {
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
     let mut map = INSTANCES.lock().expect("mutex poisoned");
-    map.insert(id, LiteSVM::default());
+    map.insert(id, LiteSVM::new());
     id
 }
 
@@ -187,7 +187,7 @@ pub fn create_default() -> LiteSvmHandle {
 pub fn create_basic() -> LiteSvmHandle {
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
     let mut map = INSTANCES.lock().expect("mutex poisoned");
-    map.insert(id, LiteSVM::new());
+    map.insert(id, LiteSVM::default());
     id
 }
 

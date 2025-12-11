@@ -6,66 +6,66 @@ const { dlopen } = Deno;
 const { symbols } = dlopen("/workspace/litesvm/crates/deno-litesvm/../../target/debug/liblitesvm_deno.so", {
   create_default: {
     parameters: [],
-    result: 'pointer',
+    result: 'u32',
     nonblocking: false
   },
   create_basic: {
     parameters: [],
-    result: 'pointer',
+    result: 'u32',
     nonblocking: false
   },
   dispose: {
     parameters: [
-      'pointer',
+      'u32',
     ],
     result: 'void',
     nonblocking: false
   },
   set_default_programs: {
     parameters: [
-      'pointer',
+      'u32',
     ],
     result: 'pointer',
     nonblocking: false
   },
   set_precompiles: {
     parameters: [
-      'pointer',
+      'u32',
     ],
     result: 'pointer',
     nonblocking: false
   },
   set_builtins: {
     parameters: [
-      'pointer',
+      'u32',
     ],
     result: 'pointer',
     nonblocking: false
   },
   set_sysvars: {
     parameters: [
-      'pointer',
+      'u32',
     ],
     result: 'pointer',
     nonblocking: false
   },
   latest_blockhash: {
     parameters: [
-      'pointer',
+      'u32',
     ],
     result: 'pointer',
     nonblocking: false
   },
   expire_blockhash: {
     parameters: [
-      'pointer',
+      'u32',
     ],
     result: 'pointer',
     nonblocking: false
   },
   airdrop: {
     parameters: [
-      'pointer',
+      'u32',
       'buffer',
       'usize',
       'u64',
@@ -75,7 +75,7 @@ const { symbols } = dlopen("/workspace/litesvm/crates/deno-litesvm/../../target/
   },
   get_account: {
     parameters: [
-      'pointer',
+      'u32',
       'buffer',
       'usize',
     ],
@@ -84,7 +84,7 @@ const { symbols } = dlopen("/workspace/litesvm/crates/deno-litesvm/../../target/
   },
   set_account: {
     parameters: [
-      'pointer',
+      'u32',
       'buffer',
       'usize',
       'pointer',
@@ -94,7 +94,7 @@ const { symbols } = dlopen("/workspace/litesvm/crates/deno-litesvm/../../target/
   },
   add_program: {
     parameters: [
-      'pointer',
+      'u32',
       'buffer',
       'usize',
       'buffer',
@@ -105,7 +105,7 @@ const { symbols } = dlopen("/workspace/litesvm/crates/deno-litesvm/../../target/
   },
   send_legacy_transaction: {
     parameters: [
-      'pointer',
+      'u32',
       'buffer',
       'usize',
     ],
@@ -114,7 +114,7 @@ const { symbols } = dlopen("/workspace/litesvm/crates/deno-litesvm/../../target/
   },
   send_versioned_transaction: {
     parameters: [
-      'pointer',
+      'u32',
       'buffer',
       'usize',
     ],
@@ -123,7 +123,7 @@ const { symbols } = dlopen("/workspace/litesvm/crates/deno-litesvm/../../target/
   },
   simulate_legacy_transaction: {
     parameters: [
-      'pointer',
+      'u32',
       'buffer',
       'usize',
     ],
@@ -132,7 +132,7 @@ const { symbols } = dlopen("/workspace/litesvm/crates/deno-litesvm/../../target/
   },
   simulate_versioned_transaction: {
     parameters: [
-      'pointer',
+      'u32',
       'buffer',
       'usize',
     ],
@@ -141,7 +141,7 @@ const { symbols } = dlopen("/workspace/litesvm/crates/deno-litesvm/../../target/
   },
   set_transaction_history: {
     parameters: [
-      'pointer',
+      'u32',
       'u64',
     ],
     result: 'pointer',
@@ -149,7 +149,7 @@ const { symbols } = dlopen("/workspace/litesvm/crates/deno-litesvm/../../target/
   },
   minimum_balance_for_rent_exemption: {
     parameters: [
-      'pointer',
+      'u32',
       'u64',
     ],
     result: 'pointer',
@@ -157,14 +157,14 @@ const { symbols } = dlopen("/workspace/litesvm/crates/deno-litesvm/../../target/
   },
   latest_blockhash_string: {
     parameters: [
-      'pointer',
+      'u32',
     ],
     result: 'pointer',
     nonblocking: false
   },
 });
 
-export type LiteSvmHandle = Deno.PointerObject;
+export type LiteSvmHandle = number;
 
 export interface SerializableAccount {
   lamports: number;
