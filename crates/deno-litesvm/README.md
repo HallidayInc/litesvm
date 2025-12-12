@@ -28,6 +28,18 @@ const payer = crypto.getRandomValues(new Uint8Array(64));
 The TypeScript wrapper in `mod.ts` keeps the Rust handles alive and provides ergonomic helpers for
 loading default programs, simulating transactions, and inspecting accounts.
 
+If you want a higher-level abstraction that can swap between the in-process LiteSVM fork and a
+remote Solana RPC endpoint, use the `SolanaLikeClient` in `client.ts`:
+
+```ts
+import { SolanaLikeClient } from "./client.ts";
+
+// In-process fork
+const local = SolanaLikeClient.local();
+// Remote RPC (uses JSON-RPC over HTTP)
+const rpc = SolanaLikeClient.rpc("http://127.0.0.1:8899");
+```
+
 ## Testing the bindings
 
 After building the shared library, you can run the Deno tests that exercise legacy and versioned
