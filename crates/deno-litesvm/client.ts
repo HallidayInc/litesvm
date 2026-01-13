@@ -8,8 +8,8 @@ import {
   PublicKey,
   Transaction,
   VersionedTransaction,
-} from "npm:@solana/web3.js";
-import bs58 from "npm:bs58";
+  encodeBase58,
+} from "./solana.ts";
 
 export interface SolanaLikeClientOptions {
   svm?: LiteSvm;
@@ -54,11 +54,6 @@ function normalizeAccount(value: unknown): SerializableAccount | null {
 
   const candidate = value as Record<string, unknown>;
 
-  // If already in SerializableAccount shape, return it.
-  if (candidate.owner instanceof Uint8Array) {
-    return candidate as SerializableAccount;
-  }
-
   const lamports = candidate.lamports;
   const executable = candidate.executable;
   const rentEpoch = (candidate.rent_epoch ?? candidate.rentEpoch) as
@@ -69,18 +64,31 @@ function normalizeAccount(value: unknown): SerializableAccount | null {
 
   if (
     typeof lamports === "number" && typeof executable === "boolean" &&
-    typeof rentEpoch === "number" && typeof owner === "string" &&
-    Array.isArray(data)
+    typeof rentEpoch === "number"
   ) {
-    const [payload, encoding] = data as [string, string];
-    const bytes = encoding === "base64" ? base64ToBytes(payload) : new Uint8Array();
-    return {
-      lamports,
-      data: bytes,
-      owner: new PublicKey(owner).toBytes(),
-      executable,
-      rent_epoch: rentEpoch,
-    } satisfies SerializableAccount;
+    if (owner instanceof Uint8Array && data instanceof Uint8Array) {
+      const account: SerializableAccount = {
+        lamports,
+        data,
+        owner,
+        executable,
+        rent_epoch: rentEpoch,
+      };
+      return account;
+    }
+
+    if (typeof owner === "string" && Array.isArray(data)) {
+      const [payload, encoding] = data as [string, string];
+      const bytes = encoding === "base64" ? base64ToBytes(payload) : new Uint8Array();
+      const account: SerializableAccount = {
+        lamports,
+        data: bytes,
+        owner: new PublicKey(owner).toBytes(),
+        executable,
+        rent_epoch: rentEpoch,
+      };
+      return account;
+    }
   }
 
   return null;
@@ -127,7 +135,7 @@ class LocalTransport implements ClientTransport {
   async requestAirdrop(pubkey: PublicKey, lamports: number): Promise<string> {
     this.#svm.airdrop(pubkey.toBytes(), lamports);
     const rand = crypto.getRandomValues(new Uint8Array(64));
-    return bs58.encode(rand);
+    return encodeBase58(rand);
   }
 
   async getAccount(pubkey: PublicKey): Promise<SerializableAccount | null> {
@@ -290,16 +298,12 @@ export class SolanaLikeClient {
   }
 }
 
-export function deserializeTransaction(bytes: Uint8Array): Transaction | VersionedTransaction {
-  try {
-    return VersionedTransaction.deserialize(bytes);
-  } catch (_) {
-    return Transaction.from(bytes);
-  }
+export function deserializeTransaction(bytes: Uint8Array): Uint8Array {
+  return new Uint8Array(bytes);
 }
 
-export function decodeBase64Transaction(encoded: string): Transaction | VersionedTransaction {
-  return deserializeTransaction(deserializeTx(encoded));
+export function decodeBase64Transaction(encoded: string): Uint8Array {
+  return deserializeTx(encoded);
 }
 
 export function encodeTransaction(tx: Transaction | VersionedTransaction): string {

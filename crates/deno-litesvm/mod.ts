@@ -196,6 +196,8 @@ export type SimulationResultEnvelope =
   | { status: "ok" | "err"; [key: string]: unknown }
   | { status: string; [key: string]: unknown };
 
+export * from "./solana.ts";
+
 export interface TransactionResponse {
   value?: TransactionResultEnvelope;
   error?: string | null;
@@ -264,11 +266,13 @@ export function expire_blockhash(arg0: LiteSvmHandle): OperationResult {
 }
 
 export function airdrop(arg0: LiteSvmHandle, arg1: Uint8Array, arg2: number): OperationResult {
-  return decodeResult(symbols.airdrop(arg0, arg1, arg1.byteLength, arg2));
+  const target = new Uint8Array(arg1);
+  return decodeResult(symbols.airdrop(arg0, target, BigInt(target.byteLength), BigInt(arg2)));
 }
 
 export function get_account(arg0: LiteSvmHandle, arg1: Uint8Array): AccountResult {
-  return decodeResult(symbols.get_account(arg0, arg1, arg1.byteLength));
+  const target = new Uint8Array(arg1);
+  return decodeResult(symbols.get_account(arg0, target, BigInt(target.byteLength)));
 }
 
 export function set_account(
@@ -278,11 +282,12 @@ export function set_account(
 ): OperationResult {
   // Serialize account as JSON for FFI
   const encoded = new TextEncoder().encode(JSON.stringify(arg2));
-  const view = Deno.UnsafePointer.create(encoded);
+  const view = Deno.UnsafePointer.of(encoded);
   if (!view) {
     throw new Error("Failed to create pointer for account data");
   }
-  return decodeResult(symbols.set_account(arg0, arg1, arg1.byteLength, view));
+  const target = new Uint8Array(arg1);
+  return decodeResult(symbols.set_account(arg0, target, BigInt(target.byteLength), view));
 }
 
 export function add_program(
@@ -290,31 +295,45 @@ export function add_program(
   arg1: Uint8Array,
   arg2: Uint8Array,
 ): OperationResult {
-  return decodeResult(symbols.add_program(arg0, arg1, arg1.byteLength, arg2, arg2.byteLength));
+  const name = new Uint8Array(arg1);
+  const program = new Uint8Array(arg2);
+  return decodeResult(
+    symbols.add_program(
+      arg0,
+      name,
+      BigInt(name.byteLength),
+      program,
+      BigInt(program.byteLength),
+    ),
+  );
 }
 
 export function send_legacy_transaction(arg0: LiteSvmHandle, arg1: Uint8Array): TransactionResponse {
-  return decodeResult(symbols.send_legacy_transaction(arg0, arg1, arg1.byteLength));
+  const tx = new Uint8Array(arg1);
+  return decodeResult(symbols.send_legacy_transaction(arg0, tx, BigInt(tx.byteLength)));
 }
 
 export function send_versioned_transaction(arg0: LiteSvmHandle, arg1: Uint8Array): TransactionResponse {
-  return decodeResult(symbols.send_versioned_transaction(arg0, arg1, arg1.byteLength));
+  const tx = new Uint8Array(arg1);
+  return decodeResult(symbols.send_versioned_transaction(arg0, tx, BigInt(tx.byteLength)));
 }
 
 export function simulate_legacy_transaction(arg0: LiteSvmHandle, arg1: Uint8Array): SimulationResponse {
-  return decodeResult(symbols.simulate_legacy_transaction(arg0, arg1, arg1.byteLength));
+  const tx = new Uint8Array(arg1);
+  return decodeResult(symbols.simulate_legacy_transaction(arg0, tx, BigInt(tx.byteLength)));
 }
 
 export function simulate_versioned_transaction(arg0: LiteSvmHandle, arg1: Uint8Array): SimulationResponse {
-  return decodeResult(symbols.simulate_versioned_transaction(arg0, arg1, arg1.byteLength));
+  const tx = new Uint8Array(arg1);
+  return decodeResult(symbols.simulate_versioned_transaction(arg0, tx, BigInt(tx.byteLength)));
 }
 
 export function set_transaction_history(arg0: LiteSvmHandle, arg1: number): OperationResult {
-  return decodeResult(symbols.set_transaction_history(arg0, arg1));
+  return decodeResult(symbols.set_transaction_history(arg0, BigInt(arg1)));
 }
 
 export function minimum_balance_for_rent_exemption(arg0: LiteSvmHandle, arg1: number): U64Result {
-  return decodeResult(symbols.minimum_balance_for_rent_exemption(arg0, arg1));
+  return decodeResult(symbols.minimum_balance_for_rent_exemption(arg0, BigInt(arg1)));
 }
 
 export function latest_blockhash_string(arg0: LiteSvmHandle): StringResult {

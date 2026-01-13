@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import { assert, assertEquals, assertStrictEquals } from "jsr:@std/assert";
 import {
   Keypair,
   LAMPORTS_PER_SOL,
@@ -7,7 +7,7 @@ import {
   Transaction,
   TransactionMessage,
   VersionedTransaction,
-} from "npm:@solana/web3.js";
+} from "./solana.ts";
 import { LiteSvm } from "./mod.ts";
 import { SolanaLikeClient, encodeTransaction } from "./client.ts";
 
@@ -31,8 +31,8 @@ async function waitForLamports(
 
 Deno.test("local client mirrors LiteSVM primitives", async () => {
   const client = SolanaLikeClient.local();
-  const payer = Keypair.generate();
-  const recipient = Keypair.generate().publicKey;
+  const payer = await Keypair.generate();
+  const recipient = (await Keypair.generate()).publicKey;
 
   await client.requestAirdrop(payer.publicKey, 2 * LAMPORTS_PER_SOL);
 
@@ -45,22 +45,22 @@ Deno.test("local client mirrors LiteSVM primitives", async () => {
     toPubkey: recipient,
     lamports: 1_000_000,
   }));
-  tx.sign(payer);
+  await tx.sign(payer);
 
   const result = await client.sendTransaction(tx);
-  assert.strictEqual(result.status, "ok");
+  assertStrictEquals(result.status, "ok");
 
   const { account } = await client.getAccount(recipient);
-  assert.ok(account);
-  assert.equal(account.lamports, 1_000_000);
+  assert(account);
+  assertEquals(account.lamports, 1_000_000);
 });
 
 Deno.test("in-process fork uses the same client surface", async () => {
   const svm = new LiteSvm();
   const client = SolanaLikeClient.fromLiteSvm(svm);
 
-  const payer = Keypair.generate();
-  const recipient = Keypair.generate();
+  const payer = await Keypair.generate();
+  const recipient = await Keypair.generate();
 
   await client.requestAirdrop(payer.publicKey, LAMPORTS_PER_SOL);
   const baseHash = await client.latestBlockhash();
@@ -78,22 +78,21 @@ Deno.test("in-process fork uses the same client surface", async () => {
   }).compileToV0Message();
 
   const tx = new VersionedTransaction(message);
-  tx.sign([payer]);
+  await tx.sign([payer]);
 
   const simulation = await client.simulateTransaction(tx);
-  assert.equal(simulation.status, "ok");
+  assertEquals(simulation.status, "ok");
 
   const result = await client.sendTransaction(tx);
-  assert.equal(result.status, "ok");
+  assertEquals(result.status, "ok");
 
   const { account } = await client.getAccount(recipient.publicKey);
-  assert.ok(account);
-  assert.equal(account.lamports, 250_000);
+  assert(account);
+  assertEquals(account.lamports, 250_000);
 });
 
 Deno.test(
   "simulate remotely then execute locally",
-  { sanitizeResources: false, sanitizeOps: false },
   async () => {
     const rpcEndpoint =
       Deno.env.get("SOLANA_RPC_URL") ?? "https://api.devnet.solana.com";
@@ -101,8 +100,8 @@ Deno.test(
     const rpcClient = SolanaLikeClient.rpc(rpcEndpoint);
     const localClient = SolanaLikeClient.local();
 
-    const payer = Keypair.generate();
-    const recipient = Keypair.generate().publicKey;
+    const payer = await Keypair.generate();
+    const recipient = (await Keypair.generate()).publicKey;
     const lamports = 500_000;
 
     await rpcClient.requestAirdrop(payer.publicKey, LAMPORTS_PER_SOL);
@@ -121,10 +120,10 @@ Deno.test(
     }).compileToV0Message();
 
     const remoteTx = new VersionedTransaction(remoteMessage);
-    remoteTx.sign([payer]);
+    await remoteTx.sign([payer]);
 
     const remoteSimulation = await rpcClient.simulateTransaction(remoteTx);
-    assert.equal(remoteSimulation.status, "ok");
+    assertEquals(remoteSimulation.status, "ok");
 
     await localClient.requestAirdrop(payer.publicKey, LAMPORTS_PER_SOL);
     const localMessage = new TransactionMessage({
@@ -140,28 +139,28 @@ Deno.test(
     }).compileToV0Message();
 
     const localTx = new VersionedTransaction(localMessage);
-    localTx.sign([payer]);
+    await localTx.sign([payer]);
 
     const sendResult = await localClient.sendTransaction(localTx);
-    assert.equal(sendResult.status, "ok");
+    assertEquals(sendResult.status, "ok");
 
     const { account } = await localClient.getAccount(recipient);
-    assert.ok(account);
-    assert.equal(account.lamports, lamports);
+    assert(account);
+    assertEquals(account.lamports, lamports);
   },
 );
 
-Deno.test("encodeTransaction helpers keep parity across transports", () => {
-  const payer = Keypair.generate();
+Deno.test("encodeTransaction helpers keep parity across transports", async () => {
+  const payer = await Keypair.generate();
   const message = new TransactionMessage({
     payerKey: payer.publicKey,
     recentBlockhash: PublicKey.unique().toBase58(),
     instructions: [],
   }).compileToV0Message();
   const tx = new VersionedTransaction(message);
-  tx.sign([payer]);
+  await tx.sign([payer]);
 
   const encoded = encodeTransaction(tx);
   const roundTripBytes = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
-  assert.deepEqual(roundTripBytes, tx.serialize());
+  assertEquals(roundTripBytes, tx.serialize());
 });

@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import { assert, assertEquals, assertStrictEquals } from "jsr:@std/assert";
 import {
   Keypair,
   LAMPORTS_PER_SOL,
@@ -7,12 +7,12 @@ import {
   Transaction,
   TransactionMessage,
   VersionedTransaction,
-} from "npm:@solana/web3.js";
+} from "./solana.ts";
 import { LiteSvm } from "./mod.ts";
 
-Deno.test("executes a legacy transfer transaction", () => {
+Deno.test("executes a legacy transfer transaction", async () => {
   const svm = new LiteSvm();
-  const payer = Keypair.generate();
+  const payer = await Keypair.generate();
   const recipient = PublicKey.unique();
 
   svm.airdrop(payer.publicKey.toBytes(), LAMPORTS_PER_SOL);
@@ -29,19 +29,19 @@ Deno.test("executes a legacy transfer transaction", () => {
       lamports: 1_000_000n,
     }),
   );
-  tx.sign(payer);
+  await tx.sign(payer);
 
   const result = svm.sendLegacyTransaction(tx.serialize());
-  assert.strictEqual(result.status, "ok");
+  assertStrictEquals(result.status, "ok");
 
   const account = svm.getAccount(recipient.toBytes());
-  assert.ok(account);
-  assert.strictEqual(BigInt(account.lamports), 1_000_000n);
+  assert(account);
+  assertStrictEquals(BigInt(account.lamports), 1_000_000n);
 });
 
-Deno.test("simulates a versioned transaction without committing state", () => {
+Deno.test("simulates a versioned transaction without committing state", async () => {
   const svm = new LiteSvm();
-  const payer = Keypair.generate();
+  const payer = await Keypair.generate();
   const recipient = PublicKey.unique();
 
   svm.airdrop(payer.publicKey.toBytes(), 5 * LAMPORTS_PER_SOL);
@@ -60,13 +60,16 @@ Deno.test("simulates a versioned transaction without committing state", () => {
   }).compileToV0Message();
 
   const tx = new VersionedTransaction(message);
-  tx.sign([payer]);
+  await tx.sign([payer]);
 
   const result = svm.simulateVersionedTransaction(tx.serialize());
-  assert.strictEqual(result.status, "ok");
-  assert.ok(result.value.logs.length > 0);
+  assertStrictEquals(result.status, "ok");
+  const logs = Array.isArray((result.value as { logs?: unknown[] }).logs)
+    ? (result.value as { logs: unknown[] }).logs
+    : [];
+  assert(logs.length > 0);
 
   // Simulation should not mutate accounts
   const account = svm.getAccount(recipient.toBytes());
-  assert.strictEqual(account, null);
+  assertStrictEquals(account, null);
 });

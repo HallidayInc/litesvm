@@ -20,9 +20,9 @@ import { LiteSvm } from "./mod.ts";
 
 const svm = new LiteSvm();
 const payer = crypto.getRandomValues(new Uint8Array(64));
-// create and serialize a transaction using @solana/web3.js (npm: @solana/web3.js)
- const result = await svm.sendLegacyTransaction(serializedTxBytes);
- console.log(result);
+// create and serialize a transaction using the bundled primitives in `solana.ts`
+const result = await svm.sendLegacyTransaction(serializedTxBytes);
+console.log(result);
 ```
 
 The TypeScript wrapper in `mod.ts` keeps the Rust handles alive and provides ergonomic helpers for
@@ -52,8 +52,8 @@ cd crates/deno-litesvm
 make test
 ```
 
-The tests demonstrate constructing transactions with `npm:@solana/web3.js`, signing them, and
-driving them through LiteSVM in memory without spinning up an HTTP server. One test also calls a real
-Solana RPC endpoint (defaults to `https://api.devnet.solana.com`, override with `SOLANA_RPC_URL`) to
-request an airdrop and simulate the transfer before replaying and executing it on an in-process
-LiteSVM fork.
+The tests demonstrate constructing transactions with the bundled, dependency-free Solana primitives,
+signing them, and driving them through LiteSVM in memory without spinning up an HTTP server. One test
+also calls a real Solana RPC endpoint (defaults to `https://api.devnet.solana.com`, override with
+`SOLANA_RPC_URL`) to request an airdrop and simulate the transfer before replaying and executing it on
+an in-process LiteSVM fork.
