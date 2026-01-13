@@ -12,6 +12,7 @@ import {
 import bs58 from "npm:bs58";
 
 export interface SolanaLikeClientOptions {
+  svm?: LiteSvm;
   endpoint?: string;
 }
 
@@ -115,8 +116,8 @@ function isVersioned(tx: Transaction | VersionedTransaction): tx is VersionedTra
 class LocalTransport implements ClientTransport {
   #svm: LiteSvm;
 
-  constructor() {
-    this.#svm = new LiteSvm();
+  constructor(svm?: LiteSvm) {
+    this.#svm = svm ?? new LiteSvm();
   }
 
   async latestBlockhash(): Promise<string> {
@@ -246,7 +247,7 @@ export class SolanaLikeClient {
   constructor(opts: SolanaLikeClientOptions = {}) {
     this.#transport = opts.endpoint
       ? new RpcTransport(opts.endpoint)
-      : new LocalTransport();
+      : new LocalTransport(opts.svm);
   }
 
   static local(): SolanaLikeClient {
@@ -255,6 +256,10 @@ export class SolanaLikeClient {
 
   static rpc(endpoint: string): SolanaLikeClient {
     return new SolanaLikeClient({ endpoint });
+  }
+
+  static fromLiteSvm(svm: LiteSvm): SolanaLikeClient {
+    return new SolanaLikeClient({ svm });
   }
 
   latestBlockhash(): Promise<string> {
