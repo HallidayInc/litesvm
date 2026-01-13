@@ -188,15 +188,13 @@ export interface AccountResult {
   error?: string | null;
 }
 
-export interface TransactionResultEnvelope {
-  status: string;
-  [key: string]: unknown;
-}
+export type TransactionResultEnvelope =
+  | { status: "ok" | "err"; [key: string]: unknown }
+  | { status: string; [key: string]: unknown };
 
-export interface SimulationResultEnvelope {
-  status: string;
-  [key: string]: unknown;
-}
+export type SimulationResultEnvelope =
+  | { status: "ok" | "err"; [key: string]: unknown }
+  | { status: string; [key: string]: unknown };
 
 export interface TransactionResponse {
   value?: TransactionResultEnvelope;

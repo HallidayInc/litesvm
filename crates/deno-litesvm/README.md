@@ -51,4 +51,6 @@ make test
 ```
 
 The tests demonstrate constructing transactions with `npm:@solana/web3.js`, signing them, and
-driving them through LiteSVM in memory.
+driving them through LiteSVM in memory. One test also calls a real Solana RPC endpoint (defaults to
+`https://api.devnet.solana.com`, override with `SOLANA_RPC_URL`) to request an airdrop and simulate
+the transfer before replaying and executing it on an in-process LiteSVM fork.

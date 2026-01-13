@@ -37,6 +37,77 @@ interface ClientTransport {
   ): Promise<SimulationResultEnvelope>;
 }
 
+function base64ToBytes(data: string): Uint8Array {
+  const binary = atob(data);
+  const buf = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    buf[i] = binary.charCodeAt(i);
+  }
+  return buf;
+}
+
+function normalizeAccount(value: unknown): SerializableAccount | null {
+  if (!value || typeof value !== "object") return null;
+
+  if (value instanceof Uint8Array) return null;
+
+  const candidate = value as Record<string, unknown>;
+
+  // If already in SerializableAccount shape, return it.
+  if (candidate.owner instanceof Uint8Array) {
+    return candidate as SerializableAccount;
+  }
+
+  const lamports = candidate.lamports;
+  const executable = candidate.executable;
+  const rentEpoch = (candidate.rent_epoch ?? candidate.rentEpoch) as
+    | number
+    | undefined;
+  const owner = candidate.owner;
+  const data = candidate.data;
+
+  if (
+    typeof lamports === "number" && typeof executable === "boolean" &&
+    typeof rentEpoch === "number" && typeof owner === "string" &&
+    Array.isArray(data)
+  ) {
+    const [payload, encoding] = data as [string, string];
+    const bytes = encoding === "base64" ? base64ToBytes(payload) : new Uint8Array();
+    return {
+      lamports,
+      data: bytes,
+      owner: new PublicKey(owner).toBytes(),
+      executable,
+      rent_epoch: rentEpoch,
+    } satisfies SerializableAccount;
+  }
+
+  return null;
+}
+
+function normalizeSendResult(result: unknown): TransactionResultEnvelope {
+  if (result && typeof result === "object" && "status" in result) {
+    return result as TransactionResultEnvelope;
+  }
+  if (typeof result === "string") {
+    return { status: "ok", signature: result };
+  }
+  return { status: "ok", value: result };
+}
+
+function normalizeSimulationResult(result: unknown): SimulationResultEnvelope {
+  if (result && typeof result === "object" && "status" in result) {
+    return result as SimulationResultEnvelope;
+  }
+
+  const candidate = result as { value?: { err?: unknown } } | undefined;
+  if (candidate?.value) {
+    return { status: candidate.value.err ? "err" : "ok", value: result };
+  }
+
+  return { status: "ok", value: result };
+}
+
 function isVersioned(tx: Transaction | VersionedTransaction): tx is VersionedTransaction {
   return "version" in tx;
 }
@@ -126,27 +197,28 @@ class RpcTransport implements ClientTransport {
       "getAccountInfo",
       [pubkey.toBase58()],
     );
-    return result.value;
+    return normalizeAccount(result.value);
   }
 
   async sendTransaction(
     tx: Transaction | VersionedTransaction,
     options?: SendOptions,
   ): Promise<TransactionResultEnvelope> {
-    const signature = await this.#rpcCall<TransactionResultEnvelope>(
+    const signature = await this.#rpcCall<unknown>(
       "sendTransaction",
       [serializeTx(tx), options ?? {}],
     );
-    return signature;
+    return normalizeSendResult(signature);
   }
 
   async simulateTransaction(
     tx: Transaction | VersionedTransaction,
   ): Promise<SimulationResultEnvelope> {
-    return this.#rpcCall(
+    const result = await this.#rpcCall<unknown>(
       "simulateTransaction",
       [serializeTx(tx)],
     );
+    return normalizeSimulationResult(result);
   }
 }
 
