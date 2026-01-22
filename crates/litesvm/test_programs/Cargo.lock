@@ -333,6 +333,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "realloc-clock"
+version = "0.1.0"
+dependencies = [
+ "solana-account-info",
+ "solana-clock",
+ "solana-msg",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey 3.0.0",
+ "solana-sysvar",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
