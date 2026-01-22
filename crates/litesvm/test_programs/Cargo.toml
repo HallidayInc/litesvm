@@ -1,5 +1,5 @@
 [workspace]
-members = ["clock-example", "counter", "failure"]
+members = ["clock-example", "counter", "failure", "realloc-clock"]
 resolver = "2"
 
 [workspace.dependencies]
