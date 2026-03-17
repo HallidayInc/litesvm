@@ -317,9 +317,12 @@ export class MessageV0 {
 
   serialize(): Uint8Array {
     const msg = serializeMessage(this.#compiled);
-    const out = new Uint8Array(msg.length + 1);
+    // V0 format: [0x80 version flag][legacy message bytes][address table lookups count (0)]
+    // The address table lookups section is required even when empty.
+    const out = new Uint8Array(msg.length + 2);
     out[0] = 0x80; // version 0 flag
     out.set(msg, 1);
+    out[msg.length + 1] = 0; // 0 address table lookups (compact-u16 of 0)
     return out;
   }
 }
@@ -357,6 +360,28 @@ export const LAMPORTS_PER_SOL = 1_000_000_000;
 export class SystemProgram {
   static programId = new PublicKey(SYSTEM_PROGRAM_ID);
 
+  static createAccount(opts: {
+    fromPubkey: PublicKey;
+    newAccountPubkey: PublicKey;
+    lamports: number | bigint;
+    space: number | bigint;
+    programId: PublicKey;
+  }): InstructionInput {
+    const data = new Uint8Array(4 + 8 + 8 + 32);
+    data.set(toLittleEndian(BigInt(0), 4), 0); // CreateAccount instruction index
+    data.set(toLittleEndian(BigInt(opts.lamports), 8), 4);
+    data.set(toLittleEndian(BigInt(opts.space), 8), 12);
+    data.set(opts.programId.toBytes(), 20);
+    return {
+      programId: SystemProgram.programId,
+      keys: [
+        { pubkey: opts.fromPubkey, isSigner: true, isWritable: true },
+        { pubkey: opts.newAccountPubkey, isSigner: true, isWritable: true },
+      ],
+      data,
+    };
+  }
+
   static transfer(opts: { fromPubkey: PublicKey; toPubkey: PublicKey; lamports: number | bigint }): InstructionInput {
     const data = new Uint8Array(4 + 8);
     data.set(toLittleEndian(BigInt(2), 4), 0); // Transfer instruction index
@@ -378,5 +403,295 @@ export function decodeBase58(value: string): Uint8Array {
 
 export function encodeBase58(bytes: Uint8Array): string {
   return base58Encode(bytes);
+}
+
+// SPL Token Program constants and utilities
+const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+
+// Ed25519 curve parameters for on-curve check
+const ED25519_P = BigInt("57896044618658097711785492504343953926634992332820282019728792003956564819949");
+const ED25519_D = BigInt("-4513249062541557337682894930092624173785641285191125241628941591882900924598840740");
+
+/**
+ * Check if a 32-byte value represents a point on the ed25519 curve
+ * This is a simplified check using the curve equation
+ */
+function isOnCurve(bytes: Uint8Array): boolean {
+  // Convert bytes to a big integer (little-endian)
+  let y = BigInt(0);
+  for (let i = 0; i < 32; i++) {
+    y += BigInt(bytes[i]) << BigInt(8 * i);
+  }
+
+  // Clear the sign bit
+  y &= (BigInt(1) << BigInt(255)) - BigInt(1);
+
+  // Calculate y^2
+  const y2 = (y * y) % ED25519_P;
+
+  // Calculate x^2 using the curve equation: -x^2 + y^2 = 1 + d*x^2*y^2
+  // Solving for x^2: x^2 = (y^2 - 1) / (d*y^2 + 1)
+  const numerator = (y2 - BigInt(1) + ED25519_P) % ED25519_P;
+  const denominator = ((ED25519_D * y2 % ED25519_P) + BigInt(1) + ED25519_P) % ED25519_P;
+
+  // Calculate modular inverse of denominator
+  const denominatorInverse = modPow(denominator, ED25519_P - BigInt(2), ED25519_P);
+  const x2 = (numerator * denominatorInverse) % ED25519_P;
+
+  // Check if x^2 has a square root (is a quadratic residue)
+  // Using Euler's criterion: x^((p-1)/2) ≡ 1 (mod p) if x is a QR
+  const exponent = (ED25519_P - BigInt(1)) / BigInt(2);
+  const result = modPow(x2, exponent, ED25519_P);
+
+  return result === BigInt(1) || x2 === BigInt(0);
+}
+
+/**
+ * Modular exponentiation: (base^exp) % mod
+ */
+function modPow(base: bigint, exp: bigint, mod: bigint): bigint {
+  let result = BigInt(1);
+  base = base % mod;
+  while (exp > 0) {
+    if (exp % BigInt(2) === BigInt(1)) {
+      result = (result * base) % mod;
+    }
+    exp = exp / BigInt(2);
+    base = (base * base) % mod;
+  }
+  return result;
+}
+
+/**
+ * Creates a program address from seeds and a program ID
+ */
+async function createProgramAddress(
+  seeds: Uint8Array[],
+  programId: PublicKey,
+): Promise<PublicKey> {
+  const PDA_MARKER = new TextEncoder().encode("ProgramDerivedAddress");
+
+  // Concatenate all seeds + programId + marker
+  let totalLength = 0;
+  for (const seed of seeds) totalLength += seed.length;
+  totalLength += 32 + PDA_MARKER.length;
+
+  const buffer = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const seed of seeds) {
+    buffer.set(seed, offset);
+    offset += seed.length;
+  }
+  buffer.set(programId.toBytes(), offset);
+  offset += 32;
+  buffer.set(PDA_MARKER, offset);
+
+  // SHA256 hash
+  const hash = await crypto.subtle.digest("SHA-256", buffer);
+  const hashBytes = new Uint8Array(hash);
+
+  // Check if point is on curve - PDAs must be OFF curve
+  if (isOnCurve(hashBytes)) {
+    throw new Error("Invalid seeds - address is on curve");
+  }
+
+  return new PublicKey(hashBytes);
+}
+
+/**
+ * Derives a program address from seeds and a program ID
+ */
+export async function findProgramAddress(
+  seeds: Uint8Array[],
+  programId: PublicKey,
+): Promise<[PublicKey, number]> {
+  for (let bump = 255; bump >= 0; bump--) {
+    try {
+      const seedsWithBump = [...seeds, new Uint8Array([bump])];
+      const address = await createProgramAddress(seedsWithBump, programId);
+      return [address, bump];
+    } catch {
+      continue;
+    }
+  }
+  throw new Error("Unable to find valid bump seed");
+}
+
+/**
+ * Gets the associated token address for a wallet and mint
+ */
+export async function getAssociatedTokenAddress(
+  mint: PublicKey,
+  owner: PublicKey,
+  programId: PublicKey = new PublicKey(TOKEN_PROGRAM_ID),
+): Promise<PublicKey> {
+  const [address] = await findProgramAddress(
+    [
+      owner.toBytes(),
+      programId.toBytes(),
+      mint.toBytes(),
+    ],
+    new PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID),
+  );
+  return address;
+}
+
+export class TokenProgram {
+  static programId = new PublicKey(TOKEN_PROGRAM_ID);
+
+  /**
+   * Initialize a new token mint
+   */
+  static initializeMint(opts: {
+    mint: PublicKey;
+    decimals: number;
+    mintAuthority: PublicKey;
+    freezeAuthority?: PublicKey | null;
+  }): InstructionInput {
+    const data = new Uint8Array(67);
+    data[0] = 0; // InitializeMint instruction
+    data[1] = opts.decimals;
+    data.set(opts.mintAuthority.toBytes(), 2);
+    if (opts.freezeAuthority) {
+      data[34] = 1; // COption::Some
+      data.set(opts.freezeAuthority.toBytes(), 35);
+    } else {
+      data[34] = 0; // COption::None
+    }
+
+    return {
+      programId: TokenProgram.programId,
+      keys: [
+        { pubkey: opts.mint, isSigner: false, isWritable: true },
+        { pubkey: new PublicKey("SysvarRent111111111111111111111111111111111"), isSigner: false, isWritable: false },
+      ],
+      data,
+    };
+  }
+
+  /**
+   * Initialize a new token account
+   */
+  static initializeAccount(opts: {
+    account: PublicKey;
+    mint: PublicKey;
+    owner: PublicKey;
+  }): InstructionInput {
+    const data = new Uint8Array(1);
+    data[0] = 1; // InitializeAccount instruction
+
+    return {
+      programId: TokenProgram.programId,
+      keys: [
+        { pubkey: opts.account, isSigner: false, isWritable: true },
+        { pubkey: opts.mint, isSigner: false, isWritable: false },
+        { pubkey: opts.owner, isSigner: false, isWritable: false },
+        { pubkey: new PublicKey("SysvarRent111111111111111111111111111111111"), isSigner: false, isWritable: false },
+      ],
+      data,
+    };
+  }
+
+  /**
+   * Mint tokens to an account
+   */
+  static mintTo(opts: {
+    mint: PublicKey;
+    destination: PublicKey;
+    authority: PublicKey;
+    amount: bigint | number;
+  }): InstructionInput {
+    const data = new Uint8Array(9);
+    data[0] = 7; // MintTo instruction
+    data.set(toLittleEndian(BigInt(opts.amount), 8), 1);
+
+    return {
+      programId: TokenProgram.programId,
+      keys: [
+        { pubkey: opts.mint, isSigner: false, isWritable: true },
+        { pubkey: opts.destination, isSigner: false, isWritable: true },
+        { pubkey: opts.authority, isSigner: true, isWritable: false },
+      ],
+      data,
+    };
+  }
+
+  /**
+   * Transfer tokens between accounts
+   */
+  static transfer(opts: {
+    source: PublicKey;
+    destination: PublicKey;
+    owner: PublicKey;
+    amount: bigint | number;
+  }): InstructionInput {
+    const data = new Uint8Array(9);
+    data[0] = 3; // Transfer instruction
+    data.set(toLittleEndian(BigInt(opts.amount), 8), 1);
+
+    return {
+      programId: TokenProgram.programId,
+      keys: [
+        { pubkey: opts.source, isSigner: false, isWritable: true },
+        { pubkey: opts.destination, isSigner: false, isWritable: true },
+        { pubkey: opts.owner, isSigner: true, isWritable: false },
+      ],
+      data,
+    };
+  }
+}
+
+export class AssociatedTokenProgram {
+  static programId = new PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID);
+
+  /**
+   * Create an associated token account
+   */
+  static create(opts: {
+    payer: PublicKey;
+    associatedToken: PublicKey;
+    owner: PublicKey;
+    mint: PublicKey;
+  }): InstructionInput {
+    return {
+      programId: AssociatedTokenProgram.programId,
+      keys: [
+        { pubkey: opts.payer, isSigner: true, isWritable: true },
+        { pubkey: opts.associatedToken, isSigner: false, isWritable: true },
+        { pubkey: opts.owner, isSigner: false, isWritable: false },
+        { pubkey: opts.mint, isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: TokenProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data: new Uint8Array(0),
+    };
+  }
+
+  /**
+   * Create an associated token account if it doesn't exist (idempotent)
+   */
+  static createIdempotent(opts: {
+    payer: PublicKey;
+    associatedToken: PublicKey;
+    owner: PublicKey;
+    mint: PublicKey;
+  }): InstructionInput {
+    const data = new Uint8Array(1);
+    data[0] = 1; // CreateIdempotent instruction
+
+    return {
+      programId: AssociatedTokenProgram.programId,
+      keys: [
+        { pubkey: opts.payer, isSigner: true, isWritable: true },
+        { pubkey: opts.associatedToken, isSigner: false, isWritable: true },
+        { pubkey: opts.owner, isSigner: false, isWritable: false },
+        { pubkey: opts.mint, isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: TokenProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data,
+    };
+  }
 }
 
