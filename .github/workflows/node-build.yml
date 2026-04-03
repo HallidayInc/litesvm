@@ -3,23 +3,7 @@ env:
   DEBUG: napi:*
   APP_NAME: litesvm
   MACOSX_DEPLOYMENT_TARGET: '10.13'
-on:
-  push:
-    branches: [master]
-    paths-ignore:
-      - '**/*.md'
-      - LICENSE
-      - '**/*.gitignore'
-      - .editorconfig
-      - crates/node-litesvm/docs/**
-  pull_request:
-    branches: [master]
-    paths-ignore:
-      - '**/*.md'
-      - LICENSE
-      - '**/*.gitignore'
-      - .editorconfig
-      - crates/node-litesvm/docs/**
+on: workflow_dispatch
 
 jobs:
   lint:

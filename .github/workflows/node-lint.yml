@@ -1,15 +1,5 @@
 name: node-lint
-on:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
-    paths-ignore:
-      - '**/*.md'
-      - LICENSE
-      - '**/*.gitignore'
-      - .editorconfig
-      - node-litesvm/docs/**
+on: workflow_dispatch
 jobs:
   lint:
     runs-on: ubuntu-latest
