@@ -471,6 +471,29 @@ pub struct ClockInfoResult {
 }
 
 #[deno_bindgen]
+pub fn set_sysvar_clock(
+    handle: u32,
+    slot: u64,
+    epoch: u64,
+    unix_timestamp: i64,
+    leader_schedule_epoch: u64,
+    epoch_start_timestamp: i64,
+) -> *const u8 {
+    let result = into_operation_result(with_instance_mut(handle, |svm| {
+        let clock = Clock {
+            slot,
+            epoch,
+            unix_timestamp,
+            leader_schedule_epoch,
+            epoch_start_timestamp,
+        };
+        svm.set_sysvar::<Clock>(&clock);
+        Ok(())
+    }));
+    serialize_to_ptr(&result)
+}
+
+#[deno_bindgen]
 pub fn get_sysvar_clock(handle: u32) -> *const u8 {
     let (value, error) = wrap_value(with_instance_mut(handle, |svm| {
         let clock: Clock = svm.get_sysvar();
