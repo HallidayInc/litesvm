@@ -386,7 +386,7 @@ function compileV0WithAlts(message: {
     payerKey: PublicKey;
     recentBlockhash: string;
     instructions: Instruction[];
-    altLookupsResolved: { accountKey: PublicKey; addresses: PublicKey[] }[];
+    altLookupsResolved: MessageV0ResolvedAltLookup[];
 }): { compiled: CompiledMessage; altLookups: MessageV0AltLookup[] } {
     // Walk all ix metas; OR-merge writable/signer flags per pubkey.
     const metas = new Map<string, SolAccountMeta>();
@@ -420,6 +420,11 @@ function compileV0WithAlts(message: {
     >();
     message.altLookupsResolved.forEach((alt, altIdx) => {
         alt.addresses.forEach((addr, addrIdx) => {
+            if (addrIdx > 255) {
+                throw new Error(
+                    `ALT ${alt.accountKey.toBase58()}: address index ${addrIdx} exceeds u8 range`,
+                );
+            }
             const key = addr.toBase58();
             if (!altIndexByPubkey.has(key)) {
                 altIndexByPubkey.set(key, { altIdx, addrIdx });
@@ -465,6 +470,21 @@ function compileV0WithAlts(message: {
     for (const bucket of altReadonlies) {
         for (const { pubkey } of bucket) indexFor.set(pubkey, cursor++);
     }
+    if (cursor > 256) {
+        throw new Error(
+            `V0 message references ${cursor} accounts; Solana account indexes are limited to 256`,
+        );
+    }
+
+    const checkedIndex = (pubkey: PublicKey | string): number => {
+        const index = indexFor.get(toB58(pubkey));
+        if (index === undefined) {
+            throw new Error(
+                `account not found while compiling V0 message: ${toB58(pubkey)}`,
+            );
+        }
+        return index;
+    };
 
     const altLookups: MessageV0AltLookup[] = message.altLookupsResolved
         .map((alt, altIdx) => ({
@@ -483,8 +503,8 @@ function compileV0WithAlts(message: {
         },
         recentBlockhash: message.recentBlockhash,
         instructions: message.instructions.map((ix) => ({
-            programIdIndex: indexFor.get(toB58(ix.programId))!,
-            accounts: ix.keys.map((k) => indexFor.get(toB58(k.pubkey))!),
+            programIdIndex: checkedIndex(ix.programId),
+            accounts: ix.keys.map((k) => checkedIndex(k.pubkey)),
             data: ix.data,
         })),
     };
@@ -834,6 +854,12 @@ export interface MessageV0AltLookup {
     readonlyIndexes: number[];
 }
 
+/** Resolved address-lookup-table contents used when compiling a V0 message. */
+export interface MessageV0ResolvedAltLookup {
+    accountKey: PublicKey;
+    addresses: PublicKey[];
+}
+
 export class MessageV0 {
     #compiled: CompiledMessage;
     #altLookups: MessageV0AltLookup[];
@@ -870,15 +896,17 @@ export class MessageV0 {
         );
     }
 
-    // Build a V0 message that compacts ALT-resolved pubkeys out of static keys.
-    // `altLookupsResolved` carries each ALT's full address list (typically loaded
-    // via `LocalClient.loadAccounts(...)` + `parseAltAccount`). The compiler
-    // emits ALT lookups only for ALTs that actually carry referenced accounts.
+    /**
+     * Build a `MessageV0` from structured instructions plus fully-resolved
+     * address lookup table contents. Signers and invoked program IDs remain
+     * static; non-signer accounts found in the supplied tables are compiled
+     * into writable/readonly ALT indexes.
+     */
     static fromInstructionsWithAlts(args: {
         payerKey: PublicKey;
         recentBlockhash: string;
         instructions: Instruction[];
-        altLookupsResolved: { accountKey: PublicKey; addresses: PublicKey[] }[];
+        altLookupsResolved: MessageV0ResolvedAltLookup[];
     }): MessageV0 {
         const { compiled, altLookups } = compileV0WithAlts({
             payerKey: args.payerKey,
