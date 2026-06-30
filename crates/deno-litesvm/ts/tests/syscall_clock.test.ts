@@ -17,7 +17,7 @@ Deno.test("executes a program that uses realloc and clock syscalls", async () =>
     const dataAccount = PublicKey.unique();
     const programBytes = await Deno.readFile(
         new URL(
-            "../litesvm/test_programs/target/deploy/realloc_clock.so",
+            "../../../litesvm/test_programs/target/deploy/realloc_clock.so",
             import.meta.url,
         ),
     );

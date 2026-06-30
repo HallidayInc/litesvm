@@ -1,5 +1,3 @@
-// deno-lint-ignore-file
-
 const { dlopen } = Deno;
 
 function resolveLib(): URL {
@@ -357,7 +355,9 @@ export class LiteSvm {
     #handle: number;
 
     constructor(opts: { basic?: boolean } = {}) {
-        this.#handle = opts.basic ? symbols.create_default() : symbols.create_basic();
+        this.#handle = opts.basic
+            ? symbols.create_default()
+            : symbols.create_basic();
     }
 
     dispose(): void {
@@ -401,7 +401,9 @@ export class LiteSvm {
     }
 
     airdrop(pubkey: Uint8Array, lamports: bigint | number): void {
-        const lamportNum = typeof lamports === "bigint" ? Number(lamports) : lamports;
+        const lamportNum = typeof lamports === "bigint"
+            ? Number(lamports)
+            : lamports;
         const pubkeyBuf = new Uint8Array(pubkey);
         unwrapVoid(
             decodeResult(
@@ -514,7 +516,9 @@ export class LiteSvm {
     simulateLegacyTransaction(bytes: Uint8Array): SimulationResultEnvelope {
         const tx = new Uint8Array(bytes);
         return unwrapValue(
-            decodeResult<{ value?: SimulationResultEnvelope; error?: string | null }>(
+            decodeResult<
+                { value?: SimulationResultEnvelope; error?: string | null }
+            >(
                 symbols.simulate_legacy_transaction(
                     this.#handle,
                     tx,
@@ -527,7 +531,9 @@ export class LiteSvm {
     simulateVersionedTransaction(bytes: Uint8Array): SimulationResultEnvelope {
         const tx = new Uint8Array(bytes);
         return unwrapValue(
-            decodeResult<{ value?: SimulationResultEnvelope; error?: string | null }>(
+            decodeResult<
+                { value?: SimulationResultEnvelope; error?: string | null }
+            >(
                 symbols.simulate_versioned_transaction(
                     this.#handle,
                     tx,
@@ -582,13 +588,17 @@ export class LiteSvm {
     }
 
     warpToSlot(slot: number): void {
-        unwrapVoid(decodeResult(symbols.warp_to_slot(this.#handle, BigInt(slot))));
+        unwrapVoid(
+            decodeResult(symbols.warp_to_slot(this.#handle, BigInt(slot))),
+        );
     }
 
     getTransactionBySignature(
         signature: Uint8Array,
     ): TransactionResultEnvelope | null {
-        if (signature.length !== 64) throw new Error("expected 64 byte signature");
+        if (signature.length !== 64) {
+            throw new Error("expected 64 byte signature");
+        }
         const sigBuf = new Uint8Array(signature);
         const raw = unwrapOptionalValue(
             decodeResult<{

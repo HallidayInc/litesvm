@@ -1,12 +1,11 @@
-import {
+import { LiteSvm } from "./litesvm.ts";
+import type {
     InnerInstruction as RawInnerInstruction,
-    LiteSvm,
     SerializableAccount,
     SimulationResultEnvelope,
     TransactionResultEnvelope,
     TransactionResultErr,
-    TransactionResultOk,
-} from "./mod.ts";
+} from "./litesvm.ts";
 import {
     ADDRESS_LOOKUP_TABLE_PROGRAM_ID,
     AddressLookupTableProgram,
@@ -20,6 +19,7 @@ import {
     chunkedWrite,
     ComputeBudgetProgram,
     decodeBase58,
+    decodeBase64,
     deserializeTransaction,
     encodeBase58,
     findProgramAddress,
@@ -212,12 +212,16 @@ export function* iterateInstructions(
         // `VersionedTransaction.instructions` return the resolved
         // `Instruction[]` shape now (programId + keys). Resolve the
         // per-key tx index by base58-comparing against `staticAccountKeys`.
-        const program_id = ix.programId instanceof PublicKey ? ix.programId : new PublicKey(ix.programId);
+        const program_id = ix.programId instanceof PublicKey
+            ? ix.programId
+            : new PublicKey(ix.programId);
         yield {
             program_id,
             data: ix.data,
             account_indexes: ix.keys.map((k) => {
-                const pk = k.pubkey instanceof PublicKey ? k.pubkey : new PublicKey(k.pubkey);
+                const pk = k.pubkey instanceof PublicKey
+                    ? k.pubkey
+                    : new PublicKey(k.pubkey);
                 return keys.findIndex((kk) => kk.equals(pk));
             }),
             inner: false,
@@ -410,7 +414,12 @@ export interface Client {
     getSlot(commitment?: Commitment): Promise<number>;
     getSignaturesForAddress(
         address: PubkeyInput,
-        opts?: { limit?: number; before?: string; until?: string; localOnly?: boolean },
+        opts?: {
+            limit?: number;
+            before?: string;
+            until?: string;
+            localOnly?: boolean;
+        },
     ): Promise<SignatureInfo[]>;
     getRecentPrioritizationFees(
         addresses?: PubkeyInput[],
@@ -432,15 +441,6 @@ export interface Client {
 
 const PROGRAM_DATA_HEADER_SIZE = 45;
 const BUFFER_HEADER_SIZE = 37;
-
-function base64ToBytes(data: string): Uint8Array {
-    const binary = atob(data);
-    const buf = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        buf[i] = binary.charCodeAt(i);
-    }
-    return buf;
-}
 
 function normalizeAccount(value: unknown): SerializableAccount | null {
     if (!value || typeof value !== "object") {
@@ -465,7 +465,10 @@ function normalizeAccount(value: unknown): SerializableAccount | null {
     // deserialization issues. For testing purposes, we just need a valid value.
     // Max safe integer in JS is 2^53 - 1, but we'll use 0 for simplicity since
     // rent_epoch isn't critical for transaction execution.
-    const rentEpoch = rawRentEpoch !== undefined && rawRentEpoch > Number.MAX_SAFE_INTEGER ? 0 : (rawRentEpoch ?? 0);
+    const rentEpoch =
+        rawRentEpoch !== undefined && rawRentEpoch > Number.MAX_SAFE_INTEGER
+            ? 0
+            : (rawRentEpoch ?? 0);
 
     if (
         typeof lamports === "number" &&
@@ -485,7 +488,9 @@ function normalizeAccount(value: unknown): SerializableAccount | null {
 
         if (typeof owner === "string" && Array.isArray(data)) {
             const [payload, encoding] = data as [string, string];
-            const bytes = encoding === "base64" ? base64ToBytes(payload) : new Uint8Array();
+            const bytes = encoding === "base64"
+                ? decodeBase64(payload)
+                : new Uint8Array();
             const account: SerializableAccount = {
                 lamports,
                 data: bytes,
@@ -518,7 +523,9 @@ function enforceTxWireSize(bytes: Uint8Array): void {
     if (bytes.length > MAX_TX_WIRE_SIZE) {
         throw new Error(
             `Transaction too large: ${bytes.length} bytes (max raw ${MAX_TX_WIRE_SIZE}, ` +
-                `base64 ${Math.ceil(bytes.length / 3) * 4}). A real RPC would reject this; ` +
+                `base64 ${
+                    Math.ceil(bytes.length / 3) * 4
+                }). A real RPC would reject this; ` +
                 `litesvm enforces the same limit. Split the work into smaller transactions.`,
         );
     }
@@ -551,6 +558,17 @@ function requiredAccountExtensions(
         off += 4 + len;
     }
     return exts;
+}
+
+function tokenProgramForMintAccount(
+    mint_account: SerializableAccount | null | undefined,
+): PublicKey | undefined {
+    const mint_owner = mint_account
+        ? new PublicKey(mint_account.owner).toBase58()
+        : undefined;
+    return mint_owner === TOKEN_2022_PROGRAM_PUBKEY
+        ? new PublicKey(TOKEN_2022_PROGRAM_PUBKEY)
+        : undefined;
 }
 
 export class LocalClient implements Client {
@@ -597,16 +615,16 @@ export class LocalClient implements Client {
         return this.#rpc;
     }
 
-    async latestBlockhash(): Promise<string> {
-        return this.#svm.latestBlockhashString();
+    latestBlockhash(): Promise<string> {
+        return Promise.resolve(this.#svm.latestBlockhashString());
     }
 
-    async requestAirdrop(pubkey: PubkeyInput, lamports: number): Promise<string> {
+    requestAirdrop(pubkey: PubkeyInput, lamports: number): Promise<string> {
         const pk = toPubkey(pubkey);
         this.#svm.expireBlockhash();
         this.#svm.airdrop(pk.toBytes(), lamports);
         const rand = crypto.getRandomValues(new Uint8Array(64));
-        return encodeBase58(rand);
+        return Promise.resolve(encodeBase58(rand));
     }
 
     async getAccount(
@@ -663,10 +681,7 @@ export class LocalClient implements Client {
         // empty for any Token-2022 holder.
         const mint_pk = toPubkey(mint);
         const mint_acc = this.svm.getAccount(mint_pk.toBytes());
-        const token_program = mint_acc &&
-                new PublicKey(mint_acc.owner).toBase58() === TOKEN_2022_PROGRAM_PUBKEY
-            ? new PublicKey(TOKEN_2022_PROGRAM_PUBKEY)
-            : undefined;
+        const token_program = tokenProgramForMintAccount(mint_acc);
         const ata = await getSPLAssociatedTokenAddress(
             mint_pk,
             toPubkey(owner),
@@ -674,7 +689,12 @@ export class LocalClient implements Client {
         );
         const account = this.svm.getAccount(ata.toBytes());
         if (!account || account.data.length < TOKEN_ACCOUNT_SIZE) {
-            return { amount: "0", decimals: 0, uiAmount: 0, uiAmountString: "0" };
+            return {
+                amount: "0",
+                decimals: 0,
+                uiAmount: 0,
+                uiAmountString: "0",
+            };
         }
         const balance = new DataView(
             account.data.buffer,
@@ -699,10 +719,7 @@ export class LocalClient implements Client {
         // TokenkegQ ATA lookup misses any Token-2022 holder's delegate.
         const mint_pk = toPubkey(mint);
         const mint_acc = this.svm.getAccount(mint_pk.toBytes());
-        const token_program = mint_acc &&
-                new PublicKey(mint_acc.owner).toBase58() === TOKEN_2022_PROGRAM_PUBKEY
-            ? new PublicKey(TOKEN_2022_PROGRAM_PUBKEY)
-            : undefined;
+        const token_program = tokenProgramForMintAccount(mint_acc);
         const ata = await getSPLAssociatedTokenAddress(
             mint_pk,
             toPubkey(owner),
@@ -726,14 +743,14 @@ export class LocalClient implements Client {
         return { delegate: delegatePubkey.toBase58(), delegatedAmount };
     }
 
-    async getTransaction(signature: string): Promise<TransactionResponse | null> {
+    getTransaction(signature: string): Promise<TransactionResponse | null> {
         let sigBytes: Uint8Array;
         try {
             sigBytes = decodeBase58(signature);
         } catch {
-            return null;
+            return Promise.resolve(null);
         }
-        if (sigBytes.length !== 64) return null;
+        if (sigBytes.length !== 64) return Promise.resolve(null);
 
         const result = this.#svm.getTransactionBySignature(sigBytes);
 
@@ -742,14 +759,18 @@ export class LocalClient implements Client {
             const isOk = result.status === "ok";
 
             const stored = this.#txStore.get(signature);
-            const transaction = stored ? deserializeTransaction(stored.bytes) : null;
-            const version = transaction instanceof VersionedTransaction ? 0 : ("legacy" as const);
+            const transaction = stored
+                ? deserializeTransaction(stored.bytes)
+                : null;
+            const version = transaction instanceof VersionedTransaction
+                ? 0
+                : ("legacy" as const);
 
             // pre/post balance arrays + token balances come from the
             // snapshot we took in `sendTransaction`. They're absent
             // only for txs replayed before this client was rev'd; we
             // fall back to empty/null in that case (same as before).
-            return {
+            return Promise.resolve({
                 signature,
                 slot: stored?.slot ?? clock.slot,
                 transaction,
@@ -771,19 +792,19 @@ export class LocalClient implements Client {
                 },
                 blockTime: Math.floor(clock.unix_timestamp),
                 version,
-            };
+            });
         }
 
         return this.#rpc.getTransaction(signature);
     }
 
-    async getTransactions(
+    getTransactions(
         signatures: string[],
     ): Promise<(TransactionResponse | null)[]> {
         return Promise.all(signatures.map((sig) => this.getTransaction(sig)));
     }
 
-    async getRecentPrioritizationFees(
+    getRecentPrioritizationFees(
         addresses?: PubkeyInput[],
     ): Promise<PrioritizationFee[]> {
         return this.#rpc.getRecentPrioritizationFees(addresses);
@@ -825,17 +846,24 @@ export class LocalClient implements Client {
                     }
                     // Persist the ALT itself; the runtime needs to read it during exec.
                     if (!this.#loadedAccounts.has(altKeyStr)) {
-                        this.#svm.setAccount(lookup.accountKey.toBytes(), altAccount);
+                        this.#svm.setAccount(
+                            lookup.accountKey.toBytes(),
+                            altAccount,
+                        );
                         this.#loadedAccounts.add(altKeyStr);
                     }
                     altData = altAccount.data;
                 }
                 const altAddresses = parseAltAccount(altData);
                 for (const idx of lookup.writableIndexes) {
-                    if (idx < altAddresses.length) accountKeys.push(altAddresses[idx]);
+                    if (idx < altAddresses.length) {
+                        accountKeys.push(altAddresses[idx]);
+                    }
                 }
                 for (const idx of lookup.readonlyIndexes) {
-                    if (idx < altAddresses.length) accountKeys.push(altAddresses[idx]);
+                    if (idx < altAddresses.length) {
+                        accountKeys.push(altAddresses[idx]);
+                    }
                 }
             }
         }
@@ -843,7 +871,9 @@ export class LocalClient implements Client {
         const accountsToFetch: PublicKey[] = [];
         for (const pk of accountKeys) {
             const pkStr = pk.toBase58();
-            if (!this.#loadedAccounts.has(pkStr) && !BUILTIN_PROGRAMS.has(pkStr)) {
+            if (
+                !this.#loadedAccounts.has(pkStr) && !BUILTIN_PROGRAMS.has(pkStr)
+            ) {
                 const existing = this.#svm.getAccount(pk.toBytes());
                 if (!existing) {
                     accountsToFetch.push(pk);
@@ -896,7 +926,8 @@ export class LocalClient implements Client {
         const pkStr = programId.toBase58();
         if (this.#loadedAccounts.has(pkStr)) return;
 
-        const { programAccount, programDataAccount, programDataAddress } = await this.#rpc.getProgramData(programId);
+        const { programAccount, programDataAccount, programDataAddress } =
+            await this.#rpc.getProgramData(programId);
 
         if (!programAccount) {
             throw new Error(
@@ -925,9 +956,14 @@ export class LocalClient implements Client {
                 );
             }
 
-            const elfBytes = programDataAccount.data.slice(PROGRAM_DATA_HEADER_SIZE);
+            const elfBytes = programDataAccount.data.slice(
+                PROGRAM_DATA_HEADER_SIZE,
+            );
             this.#svm.addProgram(programId.toBytes(), elfBytes);
-            this.#svm.setAccount(programDataAddress.toBytes(), programDataAccount);
+            this.#svm.setAccount(
+                programDataAddress.toBytes(),
+                programDataAccount,
+            );
             this.#loadedAccounts.add(programDataAddress.toBase58());
         } else if (
             ownerStr === BPF_LOADER_V2_ID.toBase58() ||
@@ -1027,7 +1063,9 @@ export class LocalClient implements Client {
             }
 
             const amount_n = parsed.amount;
-            const ui_amount = decimals > 0 ? Number(amount_n) / Math.pow(10, decimals) : Number(amount_n);
+            const ui_amount = decimals > 0
+                ? Number(amount_n) / Math.pow(10, decimals)
+                : Number(amount_n);
             tokenBalances.push({
                 accountIndex: i,
                 mint: new PublicKey(parsed.mint).toBase58(),
@@ -1092,7 +1130,9 @@ export class LocalClient implements Client {
                 fee: result.fee,
                 preBalances: pre.balances,
                 postBalances: post.balances,
-                innerInstructions: rawInnerInstructionsToApi(result.inner_instructions),
+                innerInstructions: rawInnerInstructionsToApi(
+                    result.inner_instructions,
+                ),
                 logMessages: result.logs,
                 preTokenBalances: pre.tokenBalances,
                 postTokenBalances: post.tokenBalances,
@@ -1135,10 +1175,20 @@ export class LocalClient implements Client {
         const accounts: SimulationAccount[] | null = envelope.status === "ok"
             ? envelope.post_accounts
                 .filter(
-                    (entry: { pubkey: number[]; account?: SerializableAccount }) => entry.account != null,
+                    (
+                        entry: {
+                            pubkey: number[];
+                            account?: SerializableAccount;
+                        },
+                    ) => entry.account != null,
                 )
                 .map(
-                    (entry: { pubkey: number[]; account: SerializableAccount }) => ({
+                    (
+                        entry: {
+                            pubkey: number[];
+                            account: SerializableAccount;
+                        },
+                    ) => ({
                         pubkey: encodeBase58(new Uint8Array(entry.pubkey)),
                         lamports: entry.account.lamports,
                         data: entry.account.data,
@@ -1162,7 +1212,9 @@ export class LocalClient implements Client {
             preTokenBalances: [],
             postTokenBalances: [],
             loadedAddresses: null,
-            innerInstructions: rawInnerInstructionsToApi(meta.inner_instructions),
+            innerInstructions: rawInnerInstructionsToApi(
+                meta.inner_instructions,
+            ),
         };
     }
 
@@ -1184,16 +1236,25 @@ export class LocalClient implements Client {
         const mint_pk = toPubkey(mint);
         const is_wsol = mint_pk.toBase58() === WSOL_MINT_ADDRESS;
         const mint_account = this.#svm.getAccount(mint_pk.toBytes());
-        const mint_owner_str = mint_account ? new PublicKey(mint_account.owner).toBase58() : TOKEN_PROGRAM_PUBKEY;
+        const mint_owner_str = mint_account
+            ? new PublicKey(mint_account.owner).toBase58()
+            : TOKEN_PROGRAM_PUBKEY;
         const is_token_2022 = mint_owner_str === TOKEN_2022_PROGRAM_PUBKEY;
         // Token-2022 token accounts must carry the account-side extensions that
         // their mint's extensions mandate; otherwise programs that deserialize
         // them via StateWithExtensions (e.g. Whirlpool SwapV2) reject the bare
         // account with InvalidAccountData. ATAs always carry ImmutableOwner.
-        const account_exts = is_token_2022 ? requiredAccountExtensions(mint_account?.data) : [];
+        const account_exts = is_token_2022
+            ? requiredAccountExtensions(mint_account?.data)
+            : [];
         // Token-2022 accounts append an AccountType marker at offset 165, then TLV extensions.
-        const ext_bytes = account_exts.reduce((n, e) => n + 4 + e.data.length, 0);
-        const data_len = is_token_2022 ? TOKEN_ACCOUNT_SIZE + 1 + ext_bytes : TOKEN_ACCOUNT_SIZE;
+        const ext_bytes = account_exts.reduce(
+            (n, e) => n + 4 + e.data.length,
+            0,
+        );
+        const data_len = is_token_2022
+            ? TOKEN_ACCOUNT_SIZE + 1 + ext_bytes
+            : TOKEN_ACCOUNT_SIZE;
         const data = new Uint8Array(data_len);
         const view = new DataView(data.buffer);
 
@@ -1290,13 +1351,18 @@ export class LocalClient implements Client {
         }
     }
 
-    async getSlot(commitment: Commitment = "finalized"): Promise<number> {
+    getSlot(commitment: Commitment = "finalized"): Promise<number> {
         return this.#rpc.getSlot(commitment);
     }
 
     async getSignaturesForAddress(
         address: PubkeyInput,
-        opts?: { limit?: number; before?: string; until?: string; localOnly?: boolean },
+        opts?: {
+            limit?: number;
+            before?: string;
+            until?: string;
+            localOnly?: boolean;
+        },
     ): Promise<SignatureInfo[]> {
         const target = toPubkey(address).toBase58();
         const clock = this.#svm.getClockInfo();
@@ -1313,7 +1379,9 @@ export class LocalClient implements Client {
         // Scan locally-stored transactions for ones involving this address
         const local_sigs: SignatureInfo[] = [];
         for (const [sig, stored] of this.#txStore) {
-            if (until_slot !== null && BigInt(stored.slot) < until_slot) continue;
+            if (until_slot !== null && BigInt(stored.slot) < until_slot) {
+                continue;
+            }
             const tx = deserializeTransaction(stored.bytes);
             let keys = tx.staticAccountKeys.map((k: PublicKey) => k.toBase58());
             // A v0 tx may reference `target` only through an address lookup
@@ -1328,20 +1396,26 @@ export class LocalClient implements Client {
                 try {
                     const resolved = new Map<string, PublicKey[]>();
                     for (const lookup of tx.addressTableLookups) {
-                        const acc = this.#svm.getAccount(lookup.accountKey.toBytes());
+                        const acc = this.#svm.getAccount(
+                            lookup.accountKey.toBytes(),
+                        );
                         if (!acc) continue;
                         resolved.set(
                             lookup.accountKey.toBase58(),
                             parseAltAccount(acc.data),
                         );
                     }
-                    keys = tx.resolveAllAccounts(resolved).map((k) => k.toBase58());
+                    keys = tx.resolveAllAccounts(resolved).map((k) =>
+                        k.toBase58()
+                    );
                 } catch {
                     // best-effort; fall back to the static-key match
                 }
             }
             if (keys.includes(target)) {
-                const result = this.#svm.getTransactionBySignature(decodeBase58(sig));
+                const result = this.#svm.getTransactionBySignature(
+                    decodeBase58(sig),
+                );
                 local_sigs.push({
                     signature: sig,
                     slot: stored.slot,
@@ -1359,14 +1433,20 @@ export class LocalClient implements Client {
         // only exist locally — avoids a slow devnet round-trip in completion
         // polling).
         if (this.#autoFetch && !opts?.localOnly) {
-            const rpc_opts = until_slot !== null ? { ...opts, until: undefined } : opts;
+            const rpc_opts = until_slot !== null
+                ? { ...opts, until: undefined }
+                : opts;
             const rpc_sigs = await this.#rpc.getSignaturesForAddress(
                 address,
                 rpc_opts,
             );
-            const seen = new Set(local_sigs.map((s: SignatureInfo) => s.signature));
+            const seen = new Set(
+                local_sigs.map((s: SignatureInfo) => s.signature),
+            );
             for (const sig of rpc_sigs) {
-                if (until_slot !== null && BigInt(sig.slot) < until_slot) continue;
+                if (until_slot !== null && BigInt(sig.slot) < until_slot) {
+                    continue;
+                }
                 if (!seen.has(sig.signature)) {
                     local_sigs.push(sig);
                 }
@@ -1374,18 +1454,22 @@ export class LocalClient implements Client {
         }
 
         // Sort by slot descending (most recent first)
-        local_sigs.sort((a: SignatureInfo, b: SignatureInfo) => b.slot - a.slot);
+        local_sigs.sort((a: SignatureInfo, b: SignatureInfo) =>
+            b.slot - a.slot
+        );
 
         const limit = opts?.limit ?? 1000;
         return local_sigs.slice(0, limit);
     }
 
-    async request(_args: {
+    request(_args: {
         method: string;
         params?: unknown[];
     }): Promise<unknown> {
-        throw new Error(
-            "Not implemented: LocalClient does not support raw RPC requests",
+        return Promise.reject(
+            new Error(
+                "Not implemented: LocalClient does not support raw RPC requests",
+            ),
         );
     }
 
@@ -1395,7 +1479,7 @@ export class LocalClient implements Client {
      * client was forked against. This keeps `getBlock(slot)` usable for
      * queries that need real-chain block metadata.
      */
-    async getBlock(
+    getBlock(
         slot: number,
         opts?: { transactionDetails?: "full" | "signatures" | "none" },
     ): Promise<BlockResponse | null> {
@@ -1414,7 +1498,9 @@ export class LocalClient implements Client {
         for (const key of accountKeys) {
             const pk = toPubkey(key);
             const pkStr = pk.toBase58();
-            if (!this.#loadedAccounts.has(pkStr) && !BUILTIN_PROGRAMS.has(pkStr)) {
+            if (
+                !this.#loadedAccounts.has(pkStr) && !BUILTIN_PROGRAMS.has(pkStr)
+            ) {
                 const existing = this.#svm.getAccount(pk.toBytes());
                 if (!existing) accountsToFetch.push(pk);
                 else this.#loadedAccounts.add(pkStr);
@@ -1452,7 +1538,8 @@ export class LocalClient implements Client {
             immutable?: boolean;
         },
     ): Promise<DeployProgramResult> {
-        const programKeypair = opts?.programKeypair ?? (await Keypair.generate());
+        const programKeypair = opts?.programKeypair ??
+            (await Keypair.generate());
 
         if (!opts?.upgradeAuthority) {
             this.#svm.addProgram(programKeypair.publicKey.toBytes(), elfBytes);
@@ -1563,7 +1650,7 @@ export class RpcClient implements Client {
     /** Pure RPC has no sandbox to populate, so `loadAccounts` is just a
      *  thin alias for `getMultipleAccounts` — kept for `Client` interface
      *  parity with `LocalClient`. */
-    async loadAccounts(
+    loadAccounts(
         pubkeys: PubkeyInput[],
     ): Promise<Map<string, SerializableAccount | null>> {
         return this.getMultipleAccounts(pubkeys);
@@ -1603,8 +1690,14 @@ export class RpcClient implements Client {
             if (programAccount.data.length >= 36) {
                 const programDataBytes = programAccount.data.slice(4, 36);
                 const programDataAddress = new PublicKey(programDataBytes);
-                const programDataAccount = await this.getAccount(programDataAddress);
-                return { programAccount, programDataAccount, programDataAddress };
+                const programDataAccount = await this.getAccount(
+                    programDataAddress,
+                );
+                return {
+                    programAccount,
+                    programDataAccount,
+                    programDataAddress,
+                };
             }
         }
         return {
@@ -1623,7 +1716,7 @@ export class RpcClient implements Client {
         return result.value;
     }
 
-    async getMinimumBalanceForRentExemption(dataLength: number): Promise<number> {
+    getMinimumBalanceForRentExemption(dataLength: number): Promise<number> {
         return this.call<number>("getMinimumBalanceForRentExemption", [
             dataLength,
             { commitment: "confirmed" },
@@ -1640,12 +1733,19 @@ export class RpcClient implements Client {
         );
         const account = await this.getAccount(ata);
         if (!account) {
-            return { amount: "0", decimals: 0, uiAmount: 0, uiAmountString: "0" };
+            return {
+                amount: "0",
+                decimals: 0,
+                uiAmount: 0,
+                uiAmountString: "0",
+            };
         }
         const result = await this.call<{
             context: { slot: number };
             value: SPLTokenAmount;
-        }>("getTokenAccountBalance", [ata.toBase58(), { commitment: "confirmed" }]);
+        }>("getTokenAccountBalance", [ata.toBase58(), {
+            commitment: "confirmed",
+        }]);
         return result.value;
     }
 
@@ -1658,10 +1758,7 @@ export class RpcClient implements Client {
         // TokenkegQ ATA lookup misses any Token-2022 holder's delegate.
         const mint_pk = toPubkey(mint);
         const mint_acc = await this.getAccount(mint_pk);
-        const token_program = mint_acc &&
-                new PublicKey(mint_acc.owner).toBase58() === TOKEN_2022_PROGRAM_PUBKEY
-            ? new PublicKey(TOKEN_2022_PROGRAM_PUBKEY)
-            : undefined;
+        const token_program = tokenProgramForMintAccount(mint_acc);
         const ata = await getSPLAssociatedTokenAddress(
             mint_pk,
             toPubkey(owner),
@@ -1714,18 +1811,18 @@ export class RpcClient implements Client {
         throw new Error("RPC did not return a blockhash");
     }
 
-    async getSlot(commitment: Commitment = "finalized"): Promise<number> {
+    getSlot(commitment: Commitment = "finalized"): Promise<number> {
         return this.call<number>("getSlot", [{ commitment }]);
     }
 
-    async request(args: {
+    request(args: {
         method: string;
         params?: unknown[];
     }): Promise<unknown> {
         return this.call<unknown>(args.method, args.params ?? []);
     }
 
-    async getBlock(
+    getBlock(
         slot: number,
         opts?: { transactionDetails?: "full" | "signatures" | "none" },
     ): Promise<BlockResponse | null> {
@@ -1740,7 +1837,9 @@ export class RpcClient implements Client {
         ]);
     }
 
-    async getTransaction(signature: string): Promise<TransactionResponse | null> {
+    async getTransaction(
+        signature: string,
+    ): Promise<TransactionResponse | null> {
         const resp = await this.call<
             {
                 slot: number;
@@ -1761,7 +1860,7 @@ export class RpcClient implements Client {
 
         let transaction: Transaction | VersionedTransaction | null = null;
         if (resp.transaction) {
-            const txBytes = base64ToBytes(resp.transaction[0]);
+            const txBytes = decodeBase64(resp.transaction[0]);
             transaction = deserializeTransaction(txBytes);
         }
 
@@ -1779,15 +1878,20 @@ export class RpcClient implements Client {
         };
     }
 
-    async getTransactions(
+    getTransactions(
         signatures: string[],
     ): Promise<(TransactionResponse | null)[]> {
         return Promise.all(signatures.map((sig) => this.getTransaction(sig)));
     }
 
-    async getSignaturesForAddress(
+    getSignaturesForAddress(
         address: PubkeyInput,
-        opts?: { limit?: number; before?: string; until?: string; localOnly?: boolean },
+        opts?: {
+            limit?: number;
+            before?: string;
+            until?: string;
+            localOnly?: boolean;
+        },
     ): Promise<SignatureInfo[]> {
         const config: Record<string, unknown> = { commitment: "confirmed" };
         if (opts?.limit !== undefined) config.limit = opts.limit;
@@ -1809,7 +1913,7 @@ export class RpcClient implements Client {
         return result.value;
     }
 
-    async sendRawTransaction(
+    sendRawTransaction(
         encodedTx: string,
         opts?: { skipPreflight?: boolean; preflightCommitment?: Commitment },
     ): Promise<string> {
@@ -1823,7 +1927,10 @@ export class RpcClient implements Client {
         ]);
     }
 
-    async requestAirdrop(pubkey: PubkeyInput, lamports: number): Promise<string> {
+    async requestAirdrop(
+        pubkey: PubkeyInput,
+        lamports: number,
+    ): Promise<string> {
         const pk = toPubkey(pubkey);
         const signature = await this.call<string>("requestAirdrop", [
             pk.toBase58(),
@@ -1838,7 +1945,10 @@ export class RpcClient implements Client {
             context: { slot: number };
             value: SupplyValue;
         }>("getSupply", [
-            { commitment: "confirmed", excludeNonCirculatingAccountsList: false },
+            {
+                commitment: "confirmed",
+                excludeNonCirculatingAccountsList: false,
+            },
         ]);
         return result.value;
     }
@@ -1851,10 +1961,12 @@ export class RpcClient implements Client {
         return result.value;
     }
 
-    async getRecentPrioritizationFees(
+    getRecentPrioritizationFees(
         addresses?: PubkeyInput[],
     ): Promise<PrioritizationFee[]> {
-        const params: unknown[] = addresses ? [addresses.map((a) => toPubkey(a).toBase58())] : [[]];
+        const params: unknown[] = addresses
+            ? [addresses.map((a) => toPubkey(a).toBase58())]
+            : [[]];
         return this.call<PrioritizationFee[]>(
             "getRecentPrioritizationFees",
             params,
@@ -1903,8 +2015,10 @@ export class RpcClient implements Client {
                     encoding: "base64",
                     commitment: opts?.commitment ?? "confirmed",
                     sigVerify: opts?.sigVerify ?? false,
-                    replaceRecentBlockhash: opts?.replaceRecentBlockhash ?? false,
-                    includeInnerInstructions: opts?.includeInnerInstructions ?? false,
+                    replaceRecentBlockhash: opts?.replaceRecentBlockhash ??
+                        false,
+                    includeInnerInstructions: opts?.includeInnerInstructions ??
+                        false,
                 },
             ],
         );
@@ -1912,13 +2026,17 @@ export class RpcClient implements Client {
         const value = result.value;
 
         // Static account keys for resolving account indices when mapping accounts back
-        const staticKeys: PublicKey[] = isVersioned(tx) ? tx.staticAccountKeys : [];
+        const staticKeys: PublicKey[] = isVersioned(tx)
+            ? tx.staticAccountKeys
+            : [];
 
         const returnData: SimulationReturnData | null = value.returnData
             ? {
                 programId: value.returnData.programId,
                 data: new Uint8Array(
-                    Array.from(atob(value.returnData.data[0])).map((c) => c.charCodeAt(0)),
+                    Array.from(atob(value.returnData.data[0])).map((c) =>
+                        c.charCodeAt(0)
+                    ),
                 ),
             }
             : null;
@@ -1926,10 +2044,14 @@ export class RpcClient implements Client {
         const accounts: (SimulationAccount | null)[] | null = value.accounts
             ? value.accounts.map((acc, i) => {
                 if (!acc) return null;
-                const pubkey = i < staticKeys.length ? staticKeys[i].toBase58() : "";
+                const pubkey = i < staticKeys.length
+                    ? staticKeys[i].toBase58()
+                    : "";
                 const data = acc.data[1] === "base64"
                     ? new Uint8Array(
-                        Array.from(atob(acc.data[0])).map((c) => c.charCodeAt(0)),
+                        Array.from(atob(acc.data[0])).map((c) =>
+                            c.charCodeAt(0)
+                        ),
                     )
                     : new Uint8Array();
                 return {
@@ -1990,7 +2112,9 @@ export class RpcClient implements Client {
             await new Promise((resolve) => setTimeout(resolve, 1000));
         }
 
-        throw new Error(`Transaction confirmation timeout after ${timeoutMs}ms`);
+        throw new Error(
+            `Transaction confirmation timeout after ${timeoutMs}ms`,
+        );
     }
 
     async deployProgram(
@@ -2010,11 +2134,15 @@ export class RpcClient implements Client {
             );
         }
 
-        const programKeypair = opts?.programKeypair ?? (await Keypair.generate());
+        const programKeypair = opts?.programKeypair ??
+            (await Keypair.generate());
         const authority = opts?.upgradeAuthority;
-        const priceIxs: InstructionInput[] = opts?.computeUnitPrice !== undefined
-            ? [ComputeBudgetProgram.setComputeUnitPrice(opts.computeUnitPrice)]
-            : [];
+        const priceIxs: InstructionInput[] =
+            opts?.computeUnitPrice !== undefined
+                ? [ComputeBudgetProgram.setComputeUnitPrice(
+                    opts.computeUnitPrice,
+                )]
+                : [];
         if (authority) {
             const result = await this.#deployUpgradeable(
                 payer,
@@ -2146,7 +2274,9 @@ export class RpcClient implements Client {
         const createBufResult = await this.sendTransaction(createBufferTx);
         if (createBufResult.meta?.err) {
             throw new Error(
-                `Failed to create buffer account: ${JSON.stringify(createBufResult.meta.err)}`,
+                `Failed to create buffer account: ${
+                    JSON.stringify(createBufResult.meta.err)
+                }`,
             );
         }
         signatures.push(createBufResult.signature);
@@ -2174,7 +2304,9 @@ export class RpcClient implements Client {
         );
 
         const programDataSize = PROGRAM_DATA_HEADER_SIZE + elfBytes.length;
-        const programLamports = await this.getMinimumBalanceForRentExemption(36);
+        const programLamports = await this.getMinimumBalanceForRentExemption(
+            36,
+        );
         const deployBlockhash = await this.latestBlockhash();
 
         const deployTx = new VersionedTransaction(
@@ -2205,7 +2337,9 @@ export class RpcClient implements Client {
         const deployResult = await this.sendTransaction(deployTx);
         if (deployResult.meta?.err) {
             throw new Error(
-                `Failed to deploy program: ${JSON.stringify(deployResult.meta.err)}`,
+                `Failed to deploy program: ${
+                    JSON.stringify(deployResult.meta.err)
+                }`,
             );
         }
         signatures.push(deployResult.signature);
@@ -2218,7 +2352,10 @@ export class RpcClient implements Client {
                     recentBlockhash: finalizeBlockhash,
                     instructions: [
                         ...priceIxs,
-                        BpfLoaderUpgradeable.setAuthority(programDataAddress, authorityPk),
+                        BpfLoaderUpgradeable.setAuthority(
+                            programDataAddress,
+                            authorityPk,
+                        ),
                     ],
                 }),
             );
@@ -2226,7 +2363,9 @@ export class RpcClient implements Client {
             const finalizeResult = await this.sendTransaction(finalizeTx);
             if (finalizeResult.meta?.err) {
                 throw new Error(
-                    `Failed to finalize (make immutable) program: ${JSON.stringify(finalizeResult.meta.err)}`,
+                    `Failed to finalize (make immutable) program: ${
+                        JSON.stringify(finalizeResult.meta.err)
+                    }`,
                 );
             }
             signatures.push(finalizeResult.signature);
@@ -2268,7 +2407,9 @@ export class RpcClient implements Client {
         const createResult = await this.sendTransaction(createTx);
         if (createResult.meta?.err) {
             throw new Error(
-                `Failed to create program account: ${JSON.stringify(createResult.meta.err)}`,
+                `Failed to create program account: ${
+                    JSON.stringify(createResult.meta.err)
+                }`,
             );
         }
         signatures.push(createResult.signature);
@@ -2277,7 +2418,8 @@ export class RpcClient implements Client {
             elfBytes,
             payer,
             [programKeypair],
-            (offset, chunk) => BpfLoader.write(programKeypair.publicKey, offset, chunk),
+            (offset, chunk) =>
+                BpfLoader.write(programKeypair.publicKey, offset, chunk),
             () => this.latestBlockhash(),
             (tx) => this.sendTransaction(tx),
             priceIxs,
@@ -2299,7 +2441,9 @@ export class RpcClient implements Client {
         const finalizeResult = await this.sendTransaction(finalizeTx);
         if (finalizeResult.meta?.err) {
             throw new Error(
-                `Failed to finalize program: ${JSON.stringify(finalizeResult.meta.err)}`,
+                `Failed to finalize program: ${
+                    JSON.stringify(finalizeResult.meta.err)
+                }`,
             );
         }
 
@@ -2326,8 +2470,13 @@ export async function createAddressLookupTable(
 ): Promise<PublicKey> {
     const payerPk = payer.getPublicKey();
     const recentSlot = await client.getSlot("finalized");
-    const { instruction: createIx, lookupTableAddress } = await AddressLookupTableProgram
-        .createLookupTable({ authority: payerPk, payer: payerPk, recentSlot });
+    const { instruction: createIx, lookupTableAddress } =
+        await AddressLookupTableProgram
+            .createLookupTable({
+                authority: payerPk,
+                payer: payerPk,
+                recentSlot,
+            });
 
     const send = async (ixs: InstructionInput[], label: string) => {
         const blockhash = await client.latestBlockhash();

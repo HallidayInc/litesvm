@@ -575,7 +575,7 @@ Deno.test("svm.setTokenBalance and svm.modifyTokenBalance work correctly", async
 
     const owner = await Keypair.generate();
     const mint = (await Keypair.generate()).publicKey;
-    const tokenAccount = (await Keypair.generate()).publicKey;
+    const tokenAccount = await getSPLAssociatedTokenAddress(mint, owner.publicKey);
 
     // Set initial balance
     client.setSPLTokenBalance(tokenAccount, mint, owner.publicKey, BigInt(1000));
@@ -628,7 +628,7 @@ Deno.test("fork client: getTokenAccountBalance via transport", async () => {
 
     const owner = await Keypair.generate();
     const mint = (await Keypair.generate()).publicKey;
-    const tokenAccount = (await Keypair.generate()).publicKey;
+    const tokenAccount = await getSPLAssociatedTokenAddress(mint, owner.publicKey);
 
     // Set up a token account with a known balance
     client.setSPLTokenBalance(
@@ -661,7 +661,7 @@ Deno.test("local client: deploy non-upgradeable program and execute", async () =
     // Read a real ELF binary
     const elfBytes = await Deno.readFile(
         new URL(
-            "../litesvm/test_programs/target/deploy/counter.so",
+            "../../../litesvm/test_programs/target/deploy/counter.so",
             import.meta.url,
         ),
     );
@@ -722,7 +722,7 @@ Deno.test("local client: deploy upgradeable program", async () => {
 
     const elfBytes = await Deno.readFile(
         new URL(
-            "../litesvm/test_programs/target/deploy/counter.so",
+            "../../../litesvm/test_programs/target/deploy/counter.so",
             import.meta.url,
         ),
     );

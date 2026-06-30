@@ -1,6 +1,8 @@
 CARGO_TARGET_DIR ?= ../../target
 DENO_TEST_FLAGS ?= -A --unsafely-ignore-certificate-errors
+DENO_CONFIG ?= deno.json
 SBF_BUILD_FLAGS ?= --skip-tools-install
+TEST_SBF_DIR ?= ../litesvm/test_programs/target/deploy
 
 # The three targets we ship prebuilt binaries for
 TARGETS := aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
@@ -36,7 +38,7 @@ build-all:
 	done
 
 test: build
-	cargo build-sbf $(SBF_BUILD_FLAGS) --manifest-path ../litesvm/test_programs/realloc-clock/Cargo.toml
-	deno test $(DENO_TEST_FLAGS) ts/tests/
+	cargo build-sbf $(SBF_BUILD_FLAGS) --manifest-path ../litesvm/test_programs/Cargo.toml --workspace --sbf-out-dir $(TEST_SBF_DIR)
+	deno test --config $(DENO_CONFIG) $(DENO_TEST_FLAGS) ts/tests/
 
 .PHONY: build build-all test

@@ -1,0 +1,8 @@
+{
+    "tasks": {
+        "test": "deno test -A --unsafely-ignore-certificate-errors ts/tests/"
+    },
+    "fmt": {
+        "indentWidth": 4
+    }
+}
