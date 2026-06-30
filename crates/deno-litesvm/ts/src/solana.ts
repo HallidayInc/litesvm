@@ -117,7 +117,9 @@ export function toLittleEndian(value: bigint, bytes: number): Uint8Array {
  * `svm/src/opcodes.rs`). Throws if `value` doesn't fit in `bytes`.
  */
 export function toBigEndian(value: bigint, bytes: number): Uint8Array {
-    if (value < 0n) throw new Error("toBigEndian: negative values not supported");
+    if (value < 0n) {
+        throw new Error("toBigEndian: negative values not supported");
+    }
     const out = new Uint8Array(bytes);
     let v = value;
     for (let i = bytes - 1; i >= 0; i--) {
@@ -138,7 +140,8 @@ export function toBigEndian(value: bigint, bytes: number): Uint8Array {
  */
 // Ed25519 curve constants for point validation
 const ED25519_P = 2n ** 255n - 19n;
-const ED25519_D = 37095705934669439343138083508754565189542113879843219016388785533085940283555n;
+const ED25519_D =
+    37095705934669439343138083508754565189542113879843219016388785533085940283555n;
 
 function modPow(base: bigint, exp: bigint, mod: bigint): bigint {
     let result = 1n;
@@ -176,7 +179,9 @@ export class PublicKey {
     #bytes: Uint8Array;
 
     constructor(input: string | Uint8Array) {
-        this.#bytes = typeof input === "string" ? decodeBase58(input) : new Uint8Array(input);
+        this.#bytes = typeof input === "string"
+            ? decodeBase58(input)
+            : new Uint8Array(input);
         if (this.#bytes.length !== 32) {
             throw new Error("PublicKey must be 32 bytes");
         }
@@ -271,7 +276,9 @@ export class Keypair implements SolanaSigner {
      * (first 32 bytes = Ed25519 seed, last 32 bytes = public key — Solana SDK convention).
      */
     static async fromSecretKey(secretKey: Uint8Array): Promise<Keypair> {
-        const seed = secretKey.length === 64 ? secretKey.slice(0, 32) : secretKey;
+        const seed = secretKey.length === 64
+            ? secretKey.slice(0, 32)
+            : secretKey;
         if (seed.length !== 32) {
             throw new Error(
                 "Secret key must be 32 bytes (seed) or 64 bytes (seed + pubkey)",
@@ -391,7 +398,9 @@ function compileV0WithAlts(message: {
     // Walk all ix metas; OR-merge writable/signer flags per pubkey.
     const metas = new Map<string, SolAccountMeta>();
     const addMeta = (meta: SolAccountMeta) => {
-        const key = typeof meta.pubkey === "string" ? meta.pubkey : meta.pubkey.toBase58();
+        const key = typeof meta.pubkey === "string"
+            ? meta.pubkey
+            : meta.pubkey.toBase58();
         const existing = metas.get(key);
         if (!existing) metas.set(key, { ...meta });
         else {
@@ -427,20 +436,34 @@ function compileV0WithAlts(message: {
         });
     });
     const programIds = new Set<string>(
-        message.instructions.map((ix) => typeof ix.programId === "string" ? ix.programId : ix.programId.toBase58()),
+        message.instructions.map((ix) =>
+            typeof ix.programId === "string"
+                ? ix.programId
+                : ix.programId.toBase58()
+        ),
     );
 
     const staticMetas: SolAccountMeta[] = [];
-    const altWritables = message.altLookupsResolved.map(() => [] as { addrIdx: number; pubkey: string }[]);
-    const altReadonlies = message.altLookupsResolved.map(() => [] as { addrIdx: number; pubkey: string }[]);
+    const altWritables = message.altLookupsResolved.map(() =>
+        [] as { addrIdx: number; pubkey: string }[]
+    );
+    const altReadonlies = message.altLookupsResolved.map(() =>
+        [] as { addrIdx: number; pubkey: string }[]
+    );
     for (const meta of metas.values()) {
-        const key = typeof meta.pubkey === "string" ? meta.pubkey : meta.pubkey.toBase58();
-        const altHit = !meta.is_signer && !programIds.has(key) ? altIndexByPubkey.get(key) : undefined;
+        const key = typeof meta.pubkey === "string"
+            ? meta.pubkey
+            : meta.pubkey.toBase58();
+        const altHit = !meta.is_signer && !programIds.has(key)
+            ? altIndexByPubkey.get(key)
+            : undefined;
         if (!altHit) {
             staticMetas.push(meta);
             continue;
         }
-        const bucket = meta.is_writable ? altWritables[altHit.altIdx] : altReadonlies[altHit.altIdx];
+        const bucket = meta.is_writable
+            ? altWritables[altHit.altIdx]
+            : altReadonlies[altHit.altIdx];
         bucket.push({ addrIdx: altHit.addrIdx, pubkey: key });
     }
 
@@ -455,7 +478,8 @@ function compileV0WithAlts(message: {
     ];
 
     // Combined-index space: static, then ALT writables (per-ALT in order), then ALT readonlies.
-    const toB58 = (p: PublicKey | string) => typeof p === "string" ? p : p.toBase58();
+    const toB58 = (p: PublicKey | string) =>
+        typeof p === "string" ? p : p.toBase58();
     const indexFor = new Map<string, number>();
     orderedStatic.forEach((m, i) => indexFor.set(toB58(m.pubkey), i));
     let cursor = orderedStatic.length;
@@ -472,10 +496,14 @@ function compileV0WithAlts(message: {
             writableIndexes: altWritables[altIdx].map((e) => e.addrIdx),
             readonlyIndexes: altReadonlies[altIdx].map((e) => e.addrIdx),
         }))
-        .filter((l) => l.writableIndexes.length > 0 || l.readonlyIndexes.length > 0);
+        .filter((l) =>
+            l.writableIndexes.length > 0 || l.readonlyIndexes.length > 0
+        );
 
     const compiled: CompiledMessage = {
-        accountKeys: orderedStatic.map((m) => typeof m.pubkey === "string" ? new PublicKey(m.pubkey) : m.pubkey),
+        accountKeys: orderedStatic.map((m) =>
+            typeof m.pubkey === "string" ? new PublicKey(m.pubkey) : m.pubkey
+        ),
         header: {
             requiredSignatures: signers.length,
             readonlySigned: signers.filter((m) => !m.is_writable).length,
@@ -506,7 +534,9 @@ function compile(message: {
         meta: SolAccountMeta,
     ) => {
         // pubkey may arrive as PublicKey or base58 string — normalize.
-        const key = typeof meta.pubkey === "string" ? meta.pubkey : meta.pubkey.toBase58();
+        const key = typeof meta.pubkey === "string"
+            ? meta.pubkey
+            : meta.pubkey.toBase58();
         const existing = metas.get(key);
         if (!existing) metas.set(key, { ...meta });
         else {
@@ -540,12 +570,15 @@ function compile(message: {
         ...nonSigners.filter((m) => !m.is_writable),
     ];
 
-    const toB58 = (p: PublicKey | string) => typeof p === "string" ? p : p.toBase58();
+    const toB58 = (p: PublicKey | string) =>
+        typeof p === "string" ? p : p.toBase58();
     const indexFor = new Map<string, number>();
     ordered.forEach((meta, idx) => indexFor.set(toB58(meta.pubkey), idx));
 
     return {
-        accountKeys: ordered.map((m) => typeof m.pubkey === "string" ? new PublicKey(m.pubkey) : m.pubkey),
+        accountKeys: ordered.map((m) =>
+            typeof m.pubkey === "string" ? new PublicKey(m.pubkey) : m.pubkey
+        ),
         header: {
             requiredSignatures: signers.length,
             readonlySigned: signers.filter((m) => !m.is_writable).length,
@@ -728,7 +761,9 @@ export class Transaction {
             const [numAccounts, accConsumed] = shortvecDecode(bytes, offset);
             offset += accConsumed;
             const accountIdxs: number[] = [];
-            for (let j = 0; j < numAccounts; j++) accountIdxs.push(bytes[offset++]);
+            for (let j = 0; j < numAccounts; j++) {
+                accountIdxs.push(bytes[offset++]);
+            }
             const [dataLen, dataConsumed] = shortvecDecode(bytes, offset);
             offset += dataConsumed;
             const data = bytes.slice(offset, offset + dataLen);
@@ -744,7 +779,9 @@ export class Transaction {
             });
         }
 
-        const feePayer = accountKeys.length > 0 ? accountKeys[0] : new PublicKey(new Uint8Array(32));
+        const feePayer = accountKeys.length > 0
+            ? accountKeys[0]
+            : new PublicKey(new Uint8Array(32));
         const tx = new Transaction(feePayer, recentBlockhash);
         tx.#instructions = instructions;
         tx.#signatures = rawSignatures.map((signature, i) => ({
@@ -926,7 +963,9 @@ export class MessageV0 {
     serialize(): Uint8Array {
         return serializeV0MessageWithAlts({
             header: this.#compiled.header,
-            staticAccountKeys: this.#compiled.accountKeys.map((k) => k.toBytes()),
+            staticAccountKeys: this.#compiled.accountKeys.map((k) =>
+                k.toBytes()
+            ),
             blockhash: this.#compiled.recentBlockhash,
             instructions: this.#compiled.instructions,
             altLookups: this.#altLookups.map((l) => ({
@@ -984,7 +1023,9 @@ export class VersionedTransaction {
         const versionPrefix = bytes[offset];
         if ((versionPrefix & 0x80) === 0) {
             throw new Error(
-                `Expected V0 transaction (prefix 0x80), got 0x${versionPrefix.toString(16)}`,
+                `Expected V0 transaction (prefix 0x80), got 0x${
+                    versionPrefix.toString(16)
+                }`,
             );
         }
         if ((versionPrefix & 0x7f) !== 0) {
@@ -1127,13 +1168,17 @@ export class VersionedTransaction {
             if (!altAddresses) throw new Error(`ALT ${altKey} not resolved`);
             for (const idx of lookup.writableIndexes) {
                 if (idx >= altAddresses.length) {
-                    throw new Error(`ALT ${altKey}: writable index ${idx} out of range`);
+                    throw new Error(
+                        `ALT ${altKey}: writable index ${idx} out of range`,
+                    );
                 }
                 writableEntries.push(altAddresses[idx]);
             }
             for (const idx of lookup.readonlyIndexes) {
                 if (idx >= altAddresses.length) {
-                    throw new Error(`ALT ${altKey}: readonly index ${idx} out of range`);
+                    throw new Error(
+                        `ALT ${altKey}: readonly index ${idx} out of range`,
+                    );
                 }
                 readonlyEntries.push(altAddresses[idx]);
             }
@@ -1167,7 +1212,10 @@ export class VersionedTransaction {
         this.#signatures = await Promise.all(slots.map(async (pk) => {
             const signer = signerByKey.get(pk.toBase58());
             if (!signer) throw new Error(`missing signer for ${pk.toBase58()}`);
-            return { publicKey: pk, signature: await signer.sign(messageBytes) };
+            return {
+                publicKey: pk,
+                signature: await signer.sign(messageBytes),
+            };
         }));
     }
 
@@ -1204,7 +1252,12 @@ export const LAMPORTS_PER_SOL = 1_000_000_000;
  * else surfaces as `Unknown` with the raw tag preserved for diagnostics.
  */
 export type SystemInstruction =
-    | { kind: "CreateAccount"; lamports: bigint; space: bigint; owner: PublicKey }
+    | {
+        kind: "CreateAccount";
+        lamports: bigint;
+        space: bigint;
+        owner: PublicKey;
+    }
     | { kind: "Assign"; owner: PublicKey }
     | { kind: "Transfer"; lamports: bigint }
     | {
@@ -1240,7 +1293,9 @@ export class SystemProgram {
         switch (tag) {
             case 0: {
                 // CreateAccount: [tag:u32le][lamports:u64le][space:u64le][owner:32]
-                if (data.length < 4 + 8 + 8 + 32) return { kind: "Unknown", tag };
+                if (data.length < 4 + 8 + 8 + 32) {
+                    return { kind: "Unknown", tag };
+                }
                 return {
                     kind: "CreateAccount",
                     lamports: readU64LE(data, 4),
@@ -1251,7 +1306,10 @@ export class SystemProgram {
             case 1: {
                 // Assign: [tag:u32le][owner:32]
                 if (data.length < 4 + 32) return { kind: "Unknown", tag };
-                return { kind: "Assign", owner: new PublicKey(data.slice(4, 36)) };
+                return {
+                    kind: "Assign",
+                    owner: new PublicKey(data.slice(4, 36)),
+                };
             }
             case 2: {
                 // Transfer: [tag:u32le][lamports:u64le]
@@ -1422,7 +1480,9 @@ export async function findProgramAddress(
     seeds: Uint8Array[],
     programId: PublicKey | string,
 ): Promise<ProgramAddress> {
-    const id = typeof programId === "string" ? new PublicKey(programId) : programId;
+    const id = typeof programId === "string"
+        ? new PublicKey(programId)
+        : programId;
     for (let bump = 255; bump >= 0; bump--) {
         try {
             const address = await createProgramAddress([
@@ -1441,16 +1501,22 @@ export async function findProgramAddress(
 
 const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
-const ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+const ASSOCIATED_TOKEN_PROGRAM_ID =
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 
 export async function getSPLAssociatedTokenAddress(
     mint: PublicKey | string,
     owner: PublicKey | string,
     programId: PublicKey | string = TOKEN_PROGRAM_ID,
 ): Promise<PublicKey> {
-    const toKey = (input: PublicKey | string): PublicKey => typeof input === "string" ? new PublicKey(input) : input;
+    const toKey = (input: PublicKey | string): PublicKey =>
+        typeof input === "string" ? new PublicKey(input) : input;
     const { address } = await findProgramAddress(
-        [toKey(owner).toBytes(), toKey(programId).toBytes(), toKey(mint).toBytes()],
+        [
+            toKey(owner).toBytes(),
+            toKey(programId).toBytes(),
+            toKey(mint).toBytes(),
+        ],
         new PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID),
     );
     return address;
@@ -1462,7 +1528,9 @@ export abstract class BaseTokenProgram {
     static for(
         programId: PublicKey | string,
     ): typeof TokenProgram | typeof Token2022Program {
-        const id = typeof programId === "string" ? programId : programId.toBase58();
+        const id = typeof programId === "string"
+            ? programId
+            : programId.toBase58();
         return id === TOKEN_2022_PROGRAM_ID ? Token2022Program : TokenProgram;
     }
 
@@ -1485,7 +1553,9 @@ export abstract class BaseTokenProgram {
             keys: [
                 { pubkey: opts.mint, isSigner: false, isWritable: true },
                 {
-                    pubkey: new PublicKey("SysvarRent111111111111111111111111111111111"),
+                    pubkey: new PublicKey(
+                        "SysvarRent111111111111111111111111111111111",
+                    ),
                     isSigner: false,
                     isWritable: false,
                 },
@@ -1506,7 +1576,9 @@ export abstract class BaseTokenProgram {
                 { pubkey: mint, isSigner: false, isWritable: false },
                 { pubkey: owner, isSigner: false, isWritable: false },
                 {
-                    pubkey: new PublicKey("SysvarRent111111111111111111111111111111111"),
+                    pubkey: new PublicKey(
+                        "SysvarRent111111111111111111111111111111111",
+                    ),
                     isSigner: false,
                     isWritable: false,
                 },
@@ -1614,8 +1686,16 @@ export class AssociatedTokenProgram {
                 { pubkey: associatedToken, isSigner: false, isWritable: true },
                 { pubkey: owner, isSigner: false, isWritable: false },
                 { pubkey: mint, isSigner: false, isWritable: false },
-                { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-                { pubkey: TokenProgram.programId, isSigner: false, isWritable: false },
+                {
+                    pubkey: SystemProgram.programId,
+                    isSigner: false,
+                    isWritable: false,
+                },
+                {
+                    pubkey: TokenProgram.programId,
+                    isSigner: false,
+                    isWritable: false,
+                },
             ],
             data: new Uint8Array(0),
         };
@@ -1635,7 +1715,11 @@ export class AssociatedTokenProgram {
                 { pubkey: associatedToken, isSigner: false, isWritable: true },
                 { pubkey: owner, isSigner: false, isWritable: false },
                 { pubkey: mint, isSigner: false, isWritable: false },
-                { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+                {
+                    pubkey: SystemProgram.programId,
+                    isSigner: false,
+                    isWritable: false,
+                },
                 { pubkey: tokenProgramId, isSigner: false, isWritable: false },
             ],
             data: new Uint8Array([1]), // CreateIdempotent
@@ -1690,7 +1774,11 @@ export class BpfLoader {
         data.set(chunk, 16);
         return {
             programId: BpfLoader.programId,
-            keys: [{ pubkey: programAccount, isSigner: true, isWritable: true }],
+            keys: [{
+                pubkey: programAccount,
+                isSigner: true,
+                isWritable: true,
+            }],
             data,
         };
     }
@@ -1778,7 +1866,11 @@ export class BpfLoaderUpgradeable {
                 { pubkey: buffer, isSigner: false, isWritable: true },
                 { pubkey: SYSVAR_RENT_ID, isSigner: false, isWritable: false },
                 { pubkey: SYSVAR_CLOCK_ID, isSigner: false, isWritable: false },
-                { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+                {
+                    pubkey: SystemProgram.programId,
+                    isSigner: false,
+                    isWritable: false,
+                },
                 { pubkey: authority, isSigner: true, isWritable: false },
             ],
             data,
@@ -1804,7 +1896,11 @@ export class BpfLoaderUpgradeable {
         // A present new-authority account sets it; omitting it makes the
         // account immutable.
         if (newAuthority) {
-            keys.push({ pubkey: newAuthority, isSigner: false, isWritable: false });
+            keys.push({
+                pubkey: newAuthority,
+                isSigner: false,
+                isWritable: false,
+            });
         }
         return { programId: BpfLoaderUpgradeable.programId, keys, data };
     }
@@ -1874,7 +1970,9 @@ export function buildAltAccountData(
     data[20] = 0; // last_extended_slot_start_index
     data[21] = 1; // authority = Some
     data.set(authority.toBytes(), 22);
-    addresses.forEach((a, i) => data.set(a.toBytes(), ALT_LOOKUP_TABLE_META_SIZE + i * 32));
+    addresses.forEach((a, i) =>
+        data.set(a.toBytes(), ALT_LOOKUP_TABLE_META_SIZE + i * 32)
+    );
     return data;
 }
 
@@ -1909,7 +2007,11 @@ export class AddressLookupTableProgram {
                 programId: AddressLookupTableProgram.programId,
                 keys: [
                     { pubkey: address, isSigner: false, isWritable: true },
-                    { pubkey: opts.authority, isSigner: true, isWritable: false },
+                    {
+                        pubkey: opts.authority,
+                        isSigner: true,
+                        isWritable: false,
+                    },
                     { pubkey: opts.payer, isSigner: true, isWritable: true },
                     {
                         pubkey: SystemProgram.programId,
@@ -1941,7 +2043,11 @@ export class AddressLookupTableProgram {
                 { pubkey: opts.lookupTable, isSigner: false, isWritable: true },
                 { pubkey: opts.authority, isSigner: true, isWritable: false },
                 { pubkey: opts.payer, isSigner: true, isWritable: true },
-                { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+                {
+                    pubkey: SystemProgram.programId,
+                    isSigner: false,
+                    isWritable: false,
+                },
             ],
             data,
         };
@@ -1986,14 +2092,19 @@ export async function chunkedWrite(
             MessageV0.fromInstructions({
                 payerKey: payerPk,
                 recentBlockhash: blockhash,
-                instructions: [...prefixInstructions, buildInstruction(offset, chunk)],
+                instructions: [
+                    ...prefixInstructions,
+                    buildInstruction(offset, chunk),
+                ],
             }),
         );
         await tx.sign([payer, ...signers]);
         const result = await sendTransaction(tx);
         if (result.meta?.err) {
             throw new Error(
-                `Write failed at offset ${offset}: ${JSON.stringify(result.meta.err)}`,
+                `Write failed at offset ${offset}: ${
+                    JSON.stringify(result.meta.err)
+                }`,
             );
         }
         signatures.push(result.signature);
@@ -2042,7 +2153,9 @@ export function deserializeTransaction(
     const [numSigs, sigConsumed] = shortvecDecode(bytes, 0);
     const messageStart = sigConsumed + numSigs * 64;
     const isV0 = (bytes[messageStart] & 0x80) !== 0;
-    return isV0 ? VersionedTransaction.fromBytes(bytes) : Transaction.fromBytes(bytes);
+    return isV0
+        ? VersionedTransaction.fromBytes(bytes)
+        : Transaction.fromBytes(bytes);
 }
 
 // ============================================================================
@@ -2064,8 +2177,10 @@ export const NATIVE_SOL_ADDRESS = "So11111111111111111111111111111111111111111";
 export const WSOL_MINT_ADDRESS = "So11111111111111111111111111111111111111112";
 
 export const TOKEN_ACCOUNT_SIZE = 165;
-export const TOKEN_PROGRAM_PUBKEY = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-export const TOKEN_2022_PROGRAM_PUBKEY = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+export const TOKEN_PROGRAM_PUBKEY =
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+export const TOKEN_2022_PROGRAM_PUBKEY =
+    "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 export const TOKEN_ACCOUNT_RENT_EXEMPTION = 2_039_280;
 
 /**
@@ -2163,9 +2278,13 @@ export function parseTokenAccountData(data: Uint8Array): {
         amount: view.getBigUint64(64, true),
         delegate: view.getUint32(72, true) === 1 ? data.slice(76, 108) : null,
         state: data[108],
-        isNative: view.getUint32(109, true) === 1 ? view.getBigUint64(113, true) : null,
+        isNative: view.getUint32(109, true) === 1
+            ? view.getBigUint64(113, true)
+            : null,
         delegatedAmount: view.getBigUint64(121, true),
-        closeAuthority: view.getUint32(129, true) === 1 ? data.slice(133, 165) : null,
+        closeAuthority: view.getUint32(129, true) === 1
+            ? data.slice(133, 165)
+            : null,
     };
 }
 
