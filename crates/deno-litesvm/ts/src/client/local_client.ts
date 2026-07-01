@@ -7,6 +7,7 @@ import type {
 } from "../litesvm.ts";
 import {
     ADDRESS_LOOKUP_TABLE_PROGRAM_ID,
+    AddressLookupTableProgram,
     BPF_LOADER_UPGRADEABLE_ID,
     BPF_LOADER_V1_ID,
     BPF_LOADER_V2_ID,
@@ -20,6 +21,7 @@ import {
     getSPLAssociatedTokenAddress,
     Keypair,
     LOADER_V4_ID,
+    MessageV0,
     parseAltAccount,
     PublicKey,
     SolanaSigner,
@@ -788,18 +790,19 @@ export class LocalClient implements Client {
         });
     }
 
-    /**
-     * Inject a ready-to-use Address Lookup Table directly into the SVM, skipping
-     * the on-chain create/extend (and its slot-activation delay). For litesvm
-     * tests that need a v0 tx to reference many accounts under the size limit.
-     * Returns the table address (caller-supplied or a deterministic default).
-     */
-    injectAddressLookupTable(
-        address: PublicKey,
+    async createLookupTable(
+        payer: SolanaSigner,
         addresses: PublicKey[],
-        authority?: PublicKey,
-    ): PublicKey {
-        const data = buildAltAccountData(addresses, authority ?? address);
+    ): Promise<PublicKey> {
+        const kp = await Keypair.generate();
+        const address = kp.publicKey;
+        const authority = payer.getPublicKey();
+        const current_slot = this.#svm.getClockInfo().slot;
+        const data = buildAltAccountData(
+            addresses,
+            authority,
+            current_slot,
+        );
         this.#svm.setAccount(address.toBytes(), {
             lamports: 1_000_000_000,
             data,
@@ -807,7 +810,34 @@ export class LocalClient implements Client {
             executable: false,
             rent_epoch: 0,
         });
+        this.#svm.warpToSlot(current_slot + 1);
         return address;
+    }
+
+    async deactivateLookupTable(
+        authority: SolanaSigner,
+        lookupTable: PublicKey,
+    ): Promise<string> {
+        const authority_pk = authority.getPublicKey();
+        const ix = AddressLookupTableProgram.deactivateLookupTable({
+            lookupTable,
+            authority: authority_pk,
+        });
+        const blockhash = await this.latestBlockhash();
+        const msg = MessageV0.fromInstructions({
+            payerKey: authority_pk,
+            recentBlockhash: blockhash,
+            instructions: [ix],
+        });
+        const tx = new VersionedTransaction(msg);
+        await tx.sign([authority]);
+        const res = await this.sendTransaction(tx);
+        if (res.meta?.err) {
+            throw new Error(
+                `deactivateLookupTable failed: ${JSON.stringify(res.meta.err)}`,
+            );
+        }
+        return res.signature;
     }
 
     getTokenBalance(tokenAccount: PubkeyInput): bigint {

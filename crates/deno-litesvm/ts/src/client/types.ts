@@ -403,4 +403,12 @@ export interface Client {
             immutable?: boolean;
         },
     ): Promise<DeployProgramResult>;
+    createLookupTable(
+        payer: SolanaSigner,
+        addresses: PublicKey[],
+    ): Promise<PublicKey>;
+    deactivateLookupTable(
+        authority: SolanaSigner,
+        lookupTable: PublicKey,
+    ): Promise<string>;
 }

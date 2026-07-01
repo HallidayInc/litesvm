@@ -2052,6 +2052,29 @@ export class AddressLookupTableProgram {
             data,
         };
     }
+
+    /**
+     * Build a DeactivateLookupTable instruction to mark a table as deactivated.
+     * @param opts - The options for the DeactivateLookupTable instruction.
+     * @param opts.lookupTable - The public key of the lookup table to deactivate.
+     * @param opts.authority - The public key of the authority that will sign the instruction.
+     * @returns The DeactivateLookupTable instruction.
+     */
+    static deactivateLookupTable(opts: {
+        lookupTable: PublicKey;
+        authority: PublicKey;
+    }): Instruction {
+        const data = new Uint8Array(4);
+        new DataView(data.buffer).setUint32(0, 3, true);
+        return {
+            programId: AddressLookupTableProgram.programId,
+            keys: [
+                { pubkey: opts.lookupTable, isSigner: false, isWritable: true },
+                { pubkey: opts.authority, isSigner: true, isWritable: false },
+            ],
+            data,
+        };
+    }
 }
 
 // ============================================================================

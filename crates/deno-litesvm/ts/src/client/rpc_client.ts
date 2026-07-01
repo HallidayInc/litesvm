@@ -1,5 +1,6 @@
 import type { SerializableAccount } from "../litesvm.ts";
 import {
+    AddressLookupTableProgram,
     BpfLoader,
     BpfLoaderUpgradeable,
     chunkedWrite,
@@ -889,5 +890,76 @@ export class RpcClient implements Client {
         signatures.push(finalizeResult.signature);
 
         return { id: programKeypair.publicKey, signatures };
+    }
+
+    async createLookupTable(
+        payer: SolanaSigner,
+        addresses: PublicKey[],
+    ): Promise<PublicKey> {
+        const payerPk = payer.getPublicKey();
+        const recentSlot = await this.getSlot("finalized");
+        const { instruction: createIx, lookupTableAddress } =
+            await AddressLookupTableProgram.createLookupTable({
+                authority: payerPk,
+                payer: payerPk,
+                recentSlot,
+            });
+
+        const send = async (ixs: InstructionInput[], label: string) => {
+            const blockhash = await this.latestBlockhash();
+            const msg = MessageV0.fromInstructions({
+                payerKey: payerPk,
+                recentBlockhash: blockhash,
+                instructions: ixs,
+            });
+            const tx = new VersionedTransaction(msg);
+            await tx.sign([payer]);
+            const res = await this.sendTransaction(tx);
+            if (res.meta?.err) {
+                throw new Error(`${label} failed: ${JSON.stringify(res.meta.err)}`);
+            }
+        };
+
+        await send([createIx], "createLookupTable");
+
+        // adding accounts to the lookup table in chunks to avoid tx size limit
+        const chunk = 20;
+        for (let i = 0; i < addresses.length; i += chunk) {
+            const slice = addresses.slice(i, i + chunk);
+            const extendIx = AddressLookupTableProgram.extendLookupTable({
+                lookupTable: lookupTableAddress,
+                authority: payerPk,
+                payer: payerPk,
+                addresses: slice,
+            });
+            await send([extendIx], `extendLookupTable[${i}]`);
+        }
+        return lookupTableAddress;
+    }
+
+    async deactivateLookupTable(
+        authority: SolanaSigner,
+        lookupTable: PublicKey,
+    ): Promise<string> {
+        const authority_pk = authority.getPublicKey();
+        const ix = AddressLookupTableProgram.deactivateLookupTable({
+            lookupTable,
+            authority: authority_pk,
+        });
+        const blockhash = await this.latestBlockhash();
+        const msg = MessageV0.fromInstructions({
+            payerKey: authority_pk,
+            recentBlockhash: blockhash,
+            instructions: [ix],
+        });
+        const tx = new VersionedTransaction(msg);
+        await tx.sign([authority]);
+        const res = await this.sendTransaction(tx);
+        if (res.meta?.err) {
+            throw new Error(
+                `deactivateLookupTable failed: ${JSON.stringify(res.meta.err)}`,
+            );
+        }
+        return res.signature;
     }
 }
