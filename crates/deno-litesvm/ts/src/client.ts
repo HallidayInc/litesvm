@@ -11,6 +11,8 @@ export type {
     ParsedInstruction,
     PrioritizationFee,
     PubkeyInput,
+    ResolvedLookupTable,
+    ResolvedLookupTables,
     ReturnData,
     Reward,
     SignatureInfo,

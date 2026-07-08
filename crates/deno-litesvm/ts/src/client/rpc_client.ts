@@ -41,9 +41,14 @@ import type {
 import { toPubkey } from "./types.ts";
 import {
     BUFFER_HEADER_SIZE,
+    altKeysFromIxs,
+    altKeysFromTx,
+    ensureLookupTableCoverage,
     isVersioned,
+    MAX_TX_WIRE_SIZE,
     normalizeAccount,
     PROGRAM_DATA_HEADER_SIZE,
+    resolveLookupTables,
     tokenProgramForMintAccount,
 } from "./utils.ts";
 
@@ -935,6 +940,76 @@ export class RpcClient implements Client {
             await send([extendIx], `extendLookupTable[${i}]`);
         }
         return lookupTableAddress;
+    }
+
+    resolveLookupTables(
+        lookupTables: PublicKey[],
+        opts?: { label?: string; warmup?: boolean },
+    ) {
+        return resolveLookupTables(
+            lookupTables,
+            (lookupTable) => this.getAccount(lookupTable),
+            opts?.label,
+        );
+    }
+
+    async exceedsWireLimit(
+        payer: SolanaSigner,
+        instructions: InstructionInput[],
+        opts?: {
+            lookupTables?: PublicKey[];
+            extraSigners?: SolanaSigner[];
+            label?: string;
+            maxWireSize?: number;
+            warmup?: boolean;
+        },
+    ): Promise<boolean> {
+        const { resolved } = await this.resolveLookupTables(
+            opts?.lookupTables ?? [],
+            {
+                label: opts?.label ?? "exceedsWireLimit",
+                warmup: opts?.warmup,
+            },
+        );
+        const msg = MessageV0.fromInstructionsWithAlts({
+            payerKey: payer.getPublicKey(),
+            recentBlockhash: await this.latestBlockhash(),
+            instructions,
+            altLookupsResolved: resolved,
+        });
+        const tx = new VersionedTransaction(msg);
+        await tx.sign([payer, ...(opts?.extraSigners ?? [])]);
+        return tx.serialize().length > (opts?.maxWireSize ?? MAX_TX_WIRE_SIZE);
+    }
+
+    async autoAlt(
+        payer: SolanaSigner,
+        tx: VersionedTransaction,
+        instructions: InstructionInput[],
+        opts?: { maxWireSize?: number },
+    ) {
+        if (tx.serialize().length <= (opts?.maxWireSize ?? MAX_TX_WIRE_SIZE)) {
+            return null;
+        }
+        const addresses = altKeysFromTx(tx, instructions);
+        if (addresses.length === 0) return null;
+        return {
+            accountKey: await this.createLookupTable(payer, addresses),
+            addresses,
+        };
+    }
+
+    async ensureLookupTableInstructionCoverage(
+        payer: SolanaSigner,
+        lookupTables: PublicKey[],
+        instructions: InstructionInput[],
+    ): Promise<PublicKey[]> {
+        return await ensureLookupTableCoverage(
+            lookupTables,
+            altKeysFromIxs(instructions),
+            (lookupTable) => this.getAccount(lookupTable),
+            (missing) => this.createLookupTable(payer, missing),
+        );
     }
 
     async deactivateLookupTable(

@@ -5,6 +5,7 @@ import type {
     TransactionResultEnvelope,
     TransactionResultErr,
 } from "../litesvm.ts";
+import type { InstructionInput } from "../solana.ts";
 import {
     ADDRESS_LOOKUP_TABLE_PROGRAM_ID,
     AddressLookupTableProgram,
@@ -52,10 +53,15 @@ import type {
 } from "./types.ts";
 import { rawInnerInstructionsToApi, toPubkey } from "./types.ts";
 import {
+    altKeysFromIxs,
+    altKeysFromTx,
     enforceTxWireSize,
+    ensureLookupTableCoverage,
     isVersioned,
+    MAX_TX_WIRE_SIZE,
     PROGRAM_DATA_HEADER_SIZE,
     requiredAccountExtensions,
+    resolveLookupTables,
     tokenProgramForMintAccount,
 } from "./utils.ts";
 
@@ -812,6 +818,80 @@ export class LocalClient implements Client {
         });
         this.#svm.warpToSlot(current_slot + 1);
         return address;
+    }
+
+    async resolveLookupTables(
+        lookupTables: PublicKey[],
+        opts?: { label?: string; warmup?: boolean },
+    ) {
+        const result = await resolveLookupTables(
+            lookupTables,
+            (lookupTable) => this.getAccount(lookupTable),
+            opts?.label,
+        );
+        if (opts?.warmup !== false && result.maxExtendedSlot > 0n) {
+            this.warpToSlot(Number(result.maxExtendedSlot + 1n));
+        }
+        return result;
+    }
+
+    async exceedsWireLimit(
+        payer: SolanaSigner,
+        instructions: InstructionInput[],
+        opts?: {
+            lookupTables?: PublicKey[];
+            extraSigners?: SolanaSigner[];
+            label?: string;
+            maxWireSize?: number;
+            warmup?: boolean;
+        },
+    ): Promise<boolean> {
+        const { resolved } = await this.resolveLookupTables(
+            opts?.lookupTables ?? [],
+            {
+                label: opts?.label ?? "exceedsWireLimit",
+                warmup: opts?.warmup,
+            },
+        );
+        const msg = MessageV0.fromInstructionsWithAlts({
+            payerKey: payer.getPublicKey(),
+            recentBlockhash: await this.latestBlockhash(),
+            instructions,
+            altLookupsResolved: resolved,
+        });
+        const tx = new VersionedTransaction(msg);
+        await tx.sign([payer, ...(opts?.extraSigners ?? [])]);
+        return tx.serialize().length > (opts?.maxWireSize ?? MAX_TX_WIRE_SIZE);
+    }
+
+    async autoAlt(
+        payer: SolanaSigner,
+        tx: VersionedTransaction,
+        instructions: InstructionInput[],
+        opts?: { maxWireSize?: number },
+    ) {
+        if (tx.serialize().length <= (opts?.maxWireSize ?? MAX_TX_WIRE_SIZE)) {
+            return null;
+        }
+        const addresses = altKeysFromTx(tx, instructions);
+        if (addresses.length === 0) return null;
+        return {
+            accountKey: await this.createLookupTable(payer, addresses),
+            addresses,
+        };
+    }
+
+    async ensureLookupTableInstructionCoverage(
+        payer: SolanaSigner,
+        lookupTables: PublicKey[],
+        instructions: InstructionInput[],
+    ): Promise<PublicKey[]> {
+        return await ensureLookupTableCoverage(
+            lookupTables,
+            altKeysFromIxs(instructions),
+            (lookupTable) => this.getAccount(lookupTable),
+            (missing) => this.createLookupTable(payer, missing),
+        );
     }
 
     async deactivateLookupTable(

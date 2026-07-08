@@ -1,22 +1,82 @@
-import { assert, assertEquals, assertStrictEquals } from "jsr:@std/assert";
+import { assert, assertEquals, assertRejects, assertStrictEquals } from "jsr:@std/assert";
 import {
+    ADDRESS_LOOKUP_TABLE_PROGRAM_ID,
     AssociatedTokenProgram,
+    buildAltAccountData,
     getSPLAssociatedTokenAddress,
+    type InstructionInput,
     Keypair,
+    KNOWN_MINTS,
     LAMPORTS_PER_SOL,
     MessageV0,
+    parseAltAccount,
+    parseTokenAccountData,
     PublicKey,
     SystemProgram,
     TokenProgram,
     Transaction,
     VersionedTransaction,
 } from "../src/solana.ts";
-import { LiteSvm } from "../src/mod.ts";
-import { type DeployProgramResult, LocalClient, RpcClient } from "../src/client.ts";
-import { KNOWN_MINTS, parseTokenAccountData } from "../src/solana.ts";
+import { LocalClient, RpcClient } from "../src/client.ts";
+import {
+    altKeysFromIxs,
+    altKeysFromTx,
+} from "../src/client/utils.ts";
 
 const DEFAULT_RPC = Deno.env.get("SOLANA_RPC_URL") ??
     "https://api.devnet.solana.com";
+
+function makeInstructionWithKeys(
+    programId: PublicKey,
+    payer: PublicKey,
+    extraKeys: PublicKey[],
+): InstructionInput {
+    return {
+        programId,
+        keys: [
+            { pubkey: payer, isSigner: true, isWritable: true },
+            ...extraKeys.map((pk) => ({
+                pubkey: pk,
+                isSigner: false,
+                isWritable: false,
+            })),
+        ],
+        data: new Uint8Array(),
+    };
+}
+
+async function buildVersionedTx(
+    client: LocalClient,
+    payer: Keypair,
+    instructions: InstructionInput[],
+    altLookupsResolved: { accountKey: PublicKey; addresses: PublicKey[] }[] = [],
+): Promise<VersionedTransaction> {
+    const msg = MessageV0.fromInstructionsWithAlts({
+        payerKey: payer.publicKey,
+        recentBlockhash: await client.latestBlockhash(),
+        instructions,
+        altLookupsResolved,
+    });
+    const tx = new VersionedTransaction(msg);
+    await tx.sign([payer]);
+    return tx;
+}
+
+function plantLookupTable(
+    client: LocalClient,
+    lookupTable: PublicKey,
+    addresses: PublicKey[],
+    authority: PublicKey,
+    lastExtendedSlot: number | bigint,
+): void {
+    client.svm.setAccount(lookupTable.toBytes(), {
+        lamports: 1_000_000_000,
+        data: buildAltAccountData(addresses, authority, lastExtendedSlot),
+        owner: ADDRESS_LOOKUP_TABLE_PROGRAM_ID.toBytes(),
+        executable: false,
+        rent_epoch: 0,
+    });
+}
 
 Deno.test("fork client mirrors LiteSVM primitives", async () => {
     const client = new LocalClient({ rpcEndpoint: DEFAULT_RPC });
@@ -648,6 +708,345 @@ Deno.test("fork client: getTokenAccountBalance via transport", async () => {
 
     console.log(`getTokenAccountBalance works: ${tokenBalance.amount}`);
 });
+
+Deno.test("local client completes instruction lookup table coverage with supplemental ALT", async () => {
+    const client = new LocalClient({
+        rpcEndpoint: DEFAULT_RPC,
+        autoFetchAccounts: false,
+    });
+    const payer = await Keypair.generate();
+
+    const coveredA = (await Keypair.generate()).publicKey;
+    const coveredB = (await Keypair.generate()).publicKey;
+    const missing = (await Keypair.generate()).publicKey;
+    const existingA = await client.createLookupTable(payer, [coveredA]);
+    const existingB = await client.createLookupTable(payer, [coveredB]);
+
+    const programId = PublicKey.unique();
+    const instructions = [{
+        programId,
+        keys: [
+            { pubkey: coveredA, isSigner: false, isWritable: false },
+            { pubkey: coveredB, isSigner: false, isWritable: false },
+            { pubkey: missing, isSigner: false, isWritable: false },
+            { pubkey: missing, isSigner: false, isWritable: false },
+            { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+        ],
+        data: new Uint8Array(),
+    }];
+
+    const lookupTables = await client.ensureLookupTableInstructionCoverage(
+        payer,
+        [existingA, existingB],
+        instructions,
+    );
+
+    assertEquals(
+        lookupTables.map((pk) => pk.toBase58()).slice(0, 2),
+        [existingA.toBase58(), existingB.toBase58()],
+    );
+    assertEquals(lookupTables.length, 3);
+
+    const supplemental = await client.getAccount(lookupTables[2], {
+        localOnly: true,
+    });
+    assert(supplemental);
+    assertEquals(
+        parseAltAccount(supplemental.data).map((pk) => pk.toBase58()),
+        [missing.toBase58()],
+    );
+
+    const unchanged = await client.ensureLookupTableInstructionCoverage(
+        payer,
+        lookupTables,
+        instructions,
+    );
+    assertEquals(
+        unchanged.map((pk) => pk.toBase58()),
+        lookupTables.map((pk) => pk.toBase58()),
+    );
+});
+
+// ============================================================================
+// Lookup table helpers
+// ============================================================================
+
+Deno.test("altKeysFromIxs skips signers and deduplicates", () => {
+    const programId = PublicKey.unique();
+    const signer = PublicKey.unique();
+    const accountA = PublicKey.unique();
+    const accountB = PublicKey.unique();
+
+    const keys = altKeysFromIxs([{
+        programId,
+        keys: [
+            { pubkey: signer, isSigner: true, isWritable: true },
+            { pubkey: accountA, isSigner: false, isWritable: false },
+            { pubkey: accountA, isSigner: false, isWritable: true },
+            { pubkey: accountB, isSigner: false, isWritable: false },
+        ],
+        data: new Uint8Array(),
+    }]);
+
+    assertEquals(
+        keys.map((pk) => pk.toBase58()),
+        [accountA.toBase58(), accountB.toBase58()],
+    );
+});
+
+Deno.test("altKeysFromTx excludes program ids and signers", async () => {
+    const client = new LocalClient({
+        rpcEndpoint: DEFAULT_RPC,
+        autoFetchAccounts: false,
+    });
+    const payer = await Keypair.generate();
+    const programId = PublicKey.unique();
+    const staticAccount = PublicKey.unique();
+    const instructions = [{
+        programId,
+        keys: [
+            { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+            { pubkey: staticAccount, isSigner: false, isWritable: false },
+        ],
+        data: new Uint8Array(),
+    }];
+    const tx = await buildVersionedTx(client, payer, instructions);
+
+    assertEquals(
+        altKeysFromTx(tx, instructions).map((pk) => pk.toBase58()),
+        [staticAccount.toBase58()],
+    );
+});
+
+Deno.test("local client resolveLookupTables parses tables and warps by default", async () => {
+    const client = new LocalClient({
+        rpcEndpoint: DEFAULT_RPC,
+        autoFetchAccounts: false,
+    });
+    const authority = (await Keypair.generate()).publicKey;
+    const address = (await Keypair.generate()).publicKey;
+    const lookupTable = (await Keypair.generate()).publicKey;
+    const lastExtendedSlot = 500n;
+
+    plantLookupTable(client, lookupTable, [address], authority, lastExtendedSlot);
+    const slotBefore = client.svm.getClockInfo().slot;
+
+    const result = await client.resolveLookupTables([lookupTable]);
+
+    assertEquals(result.maxExtendedSlot, lastExtendedSlot);
+    assertEquals(result.resolved.length, 1);
+    assertEquals(result.resolved[0].accountKey.toBase58(), lookupTable.toBase58());
+    assertEquals(
+        result.resolved[0].addresses.map((pk) => pk.toBase58()),
+        [address.toBase58()],
+    );
+    assert(
+        client.svm.getClockInfo().slot >= Number(lastExtendedSlot + 1n),
+        "should warp past last extended slot",
+    );
+    assert(
+        client.svm.getClockInfo().slot >= slotBefore,
+        "warmup should not move slot backwards",
+    );
+});
+
+Deno.test("local client resolveLookupTables respects warmup: false", async () => {
+    const client = new LocalClient({
+        rpcEndpoint: DEFAULT_RPC,
+        autoFetchAccounts: false,
+    });
+    const authority = (await Keypair.generate()).publicKey;
+    const address = (await Keypair.generate()).publicKey;
+    const lookupTable = (await Keypair.generate()).publicKey;
+
+    plantLookupTable(client, lookupTable, [address], authority, 900n);
+    const slotBefore = client.svm.getClockInfo().slot;
+
+    const result = await client.resolveLookupTables([lookupTable], {
+        warmup: false,
+    });
+
+    assertEquals(result.maxExtendedSlot, 900n);
+    assertEquals(client.svm.getClockInfo().slot, slotBefore);
+});
+
+Deno.test("local client resolveLookupTables throws when ALT is missing", async () => {
+    const client = new LocalClient({
+        rpcEndpoint: DEFAULT_RPC,
+        autoFetchAccounts: false,
+    });
+    const missing = PublicKey.unique();
+
+    await assertRejects(
+        () => client.resolveLookupTables([missing], { label: "test-missing-alt" }),
+        Error,
+        "test-missing-alt: ALT account not found",
+    );
+});
+
+Deno.test("local client exceedsWireLimit reports small and large transactions", async () => {
+    const client = new LocalClient({
+        rpcEndpoint: DEFAULT_RPC,
+        autoFetchAccounts: false,
+    });
+    const payer = await Keypair.generate();
+    const programId = PublicKey.unique();
+
+    const small = makeInstructionWithKeys(programId, payer.publicKey, []);
+    assertEquals(
+        await client.exceedsWireLimit(payer, [small], { warmup: false }),
+        false,
+    );
+
+    const manyKeys = await Promise.all(
+        Array.from({ length: 20 }, async () => (await Keypair.generate()).publicKey),
+    );
+    const large = makeInstructionWithKeys(programId, payer.publicKey, manyKeys);
+    assertEquals(
+        await client.exceedsWireLimit(payer, [large], {
+            maxWireSize: 300,
+            warmup: false,
+        }),
+        true,
+    );
+});
+
+Deno.test("local client exceedsWireLimit shrinks when lookup tables cover accounts", async () => {
+    const client = new LocalClient({
+        rpcEndpoint: DEFAULT_RPC,
+        autoFetchAccounts: false,
+    });
+    const payer = await Keypair.generate();
+    const programId = PublicKey.unique();
+    const accounts = await Promise.all(
+        Array.from({ length: 12 }, async () => (await Keypair.generate()).publicKey),
+    );
+    const lookupTable = await client.createLookupTable(payer, accounts);
+    const instructions = [makeInstructionWithKeys(
+        programId,
+        payer.publicKey,
+        accounts,
+    )];
+
+    assertEquals(
+        await client.exceedsWireLimit(payer, instructions, {
+            lookupTables: [],
+            maxWireSize: 400,
+            warmup: false,
+        }),
+        true,
+    );
+    assertEquals(
+        await client.exceedsWireLimit(payer, instructions, {
+            lookupTables: [lookupTable],
+            maxWireSize: 400,
+            warmup: false,
+        }),
+        false,
+    );
+});
+
+Deno.test("local client autoAlt returns null for small transactions", async () => {
+    const client = new LocalClient({
+        rpcEndpoint: DEFAULT_RPC,
+        autoFetchAccounts: false,
+    });
+    const payer = await Keypair.generate();
+    const programId = PublicKey.unique();
+    const instructions = [makeInstructionWithKeys(programId, payer.publicKey, [])];
+    const tx = await buildVersionedTx(client, payer, instructions);
+
+    assertStrictEquals(await client.autoAlt(payer, tx, instructions), null);
+});
+
+Deno.test("local client autoAlt creates supplemental ALT for oversized transactions", async () => {
+    const client = new LocalClient({
+        rpcEndpoint: DEFAULT_RPC,
+        autoFetchAccounts: false,
+    });
+    const payer = await Keypair.generate();
+    const programId = PublicKey.unique();
+    const compressible = await Promise.all(
+        Array.from({ length: 20 }, async () => (await Keypair.generate()).publicKey),
+    );
+    const instructions = [makeInstructionWithKeys(
+        programId,
+        payer.publicKey,
+        compressible,
+    )];
+    const tx = await buildVersionedTx(client, payer, instructions);
+    const maxWireSize = 300;
+    assert(
+        tx.serialize().length > maxWireSize,
+        "fixture should exceed the test wire limit",
+    );
+
+    const supplemental = await client.autoAlt(payer, tx, instructions, {
+        maxWireSize,
+    });
+    assert(supplemental);
+    assertEquals(
+        supplemental.addresses.map((pk) => pk.toBase58()).sort(),
+        compressible.map((pk) => pk.toBase58()).sort(),
+    );
+
+    const account = await client.getAccount(supplemental.accountKey, {
+        localOnly: true,
+    });
+    assert(account);
+    assertEquals(
+        parseAltAccount(account.data).map((pk) => pk.toBase58()).sort(),
+        compressible.map((pk) => pk.toBase58()).sort(),
+    );
+});
+
+Deno.test("local client autoAlt returns null when no compressible static keys exist", async () => {
+    const client = new LocalClient({
+        rpcEndpoint: DEFAULT_RPC,
+        autoFetchAccounts: false,
+    });
+    const payer = await Keypair.generate();
+    const programId = PublicKey.unique();
+    const instructions = [{
+        programId,
+        keys: [{ pubkey: payer.publicKey, isSigner: true, isWritable: true }],
+        data: new Uint8Array(),
+    }];
+    const tx = await buildVersionedTx(client, payer, instructions);
+
+    assertStrictEquals(
+        await client.autoAlt(payer, tx, instructions, { maxWireSize: 1 }),
+        null,
+    );
+});
+
+Deno.test("rpc client resolveLookupTables handles empty input", async () => {
+    const client = new RpcClient(DEFAULT_RPC);
+    const result = await client.resolveLookupTables([]);
+
+    assertEquals(result.resolved, []);
+    assertEquals(result.maxExtendedSlot, 0n);
+});
+
+Deno.test(
+    "rpc client exceedsWireLimit uses RPC blockhash",
+    { ignore: !Deno.env.get("SOLANA_RPC_URL") },
+    async () => {
+        const client = new RpcClient(Deno.env.get("SOLANA_RPC_URL")!);
+        const payer = await Keypair.generate();
+        const programId = PublicKey.unique();
+        const instructions = [makeInstructionWithKeys(programId, payer.publicKey, [])];
+
+        assertEquals(
+            await client.exceedsWireLimit(payer, instructions, { maxWireSize: 50 }),
+            true,
+        );
+        assertEquals(
+            await client.exceedsWireLimit(payer, instructions, { maxWireSize: 10_000 }),
+            false,
+        );
+    },
+);
 
 // ============================================================================
 // Deploy Program Tests

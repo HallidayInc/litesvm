@@ -1,12 +1,15 @@
 import type { SerializableAccount } from "../litesvm.ts";
+import type { InstructionInput } from "../solana.ts";
 import {
     decodeBase64,
+    parseAltAccount,
     PublicKey,
     TOKEN_2022_PROGRAM_PUBKEY,
     TOKEN_ACCOUNT_SIZE,
     Transaction,
     VersionedTransaction,
 } from "../solana.ts";
+import type { ResolvedLookupTables } from "./types.ts";
 
 export const PROGRAM_DATA_HEADER_SIZE = 45;
 export const BUFFER_HEADER_SIZE = 37;
@@ -98,6 +101,112 @@ export function enforceTxWireSize(bytes: Uint8Array): void {
                 `litesvm enforces the same limit. Split the work into smaller transactions.`,
         );
     }
+}
+
+export async function resolveLookupTables(
+    lookupTables: PublicKey[],
+    getLookupTable: (
+        lookupTable: PublicKey,
+    ) => Promise<SerializableAccount | null>,
+    label = "resolveLookupTables",
+): Promise<ResolvedLookupTables> {
+    const resolved: ResolvedLookupTables["resolved"] = [];
+    let maxExtendedSlot = 0n;
+    for (const lookupTable of lookupTables) {
+        const account = await getLookupTable(lookupTable);
+        if (!account) {
+            throw new Error(
+                `${label}: ALT account not found: ${lookupTable.toBase58()}`,
+            );
+        }
+        const view = new DataView(
+            account.data.buffer,
+            account.data.byteOffset + 12,
+            8,
+        );
+        const lastExtendedSlot = view.getBigUint64(0, true);
+        if (lastExtendedSlot > maxExtendedSlot) {
+            maxExtendedSlot = lastExtendedSlot;
+        }
+        resolved.push({
+            accountKey: lookupTable,
+            addresses: parseAltAccount(account.data),
+        });
+    }
+    return { resolved, maxExtendedSlot };
+}
+
+export async function ensureLookupTableCoverage(
+    lookupTables: PublicKey[],
+    addresses: PublicKey[],
+    getLookupTable: (
+        lookupTable: PublicKey,
+    ) => Promise<SerializableAccount | null>,
+    createLookupTable: (addresses: PublicKey[]) => Promise<PublicKey>,
+): Promise<PublicKey[]> {
+    const covered = new Set<string>();
+    const { resolved } = await resolveLookupTables(
+        lookupTables,
+        getLookupTable,
+        "ensureLookupTableCoverage",
+    );
+    for (const lookupTable of resolved) {
+        for (const address of lookupTable.addresses) {
+            covered.add(address.toBase58());
+        }
+    }
+
+    const seen_missing = new Set<string>();
+    const missing: PublicKey[] = [];
+    for (const address of addresses) {
+        const key = address.toBase58();
+        if (covered.has(key) || seen_missing.has(key)) continue;
+        seen_missing.add(key);
+        missing.push(address);
+    }
+
+    if (missing.length === 0) return lookupTables;
+    const supplemental = await createLookupTable(missing);
+    return [...lookupTables, supplemental];
+}
+
+export function altKeysFromIxs(
+    instructions: InstructionInput[],
+): PublicKey[] {
+    const seen = new Set<string>();
+    const out: PublicKey[] = [];
+    for (const ix of instructions) {
+        for (const key of ix.keys) {
+            if (key.isSigner) continue;
+            const pubkey = key.pubkey instanceof PublicKey
+                ? key.pubkey
+                : new PublicKey(key.pubkey);
+            const b58 = pubkey.toBase58();
+            if (seen.has(b58)) continue;
+            seen.add(b58);
+            out.push(pubkey);
+        }
+    }
+    return out;
+}
+
+export function altKeysFromTx(
+    tx: VersionedTransaction,
+    instructions: InstructionInput[],
+): PublicKey[] {
+    const programIds = new Set(
+        instructions.map((ix) => ix.programId.toBase58()),
+    );
+    const numSigners = tx.message.header.requiredSignatures;
+    const seen = new Set<string>();
+    const out: PublicKey[] = [];
+    for (const key of tx.staticAccountKeys.slice(numSigners)) {
+        const b58 = key.toBase58();
+        if (programIds.has(b58) || seen.has(b58)) continue;
+        seen.add(b58);
+        out.push(key);
+    }
+    return out;
 }
 
 // Maps a token-2022 mint's extensions to the account-side extensions its token
