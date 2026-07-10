@@ -3,6 +3,7 @@ import type {
     SerializableAccount,
 } from "../litesvm.ts";
 import type {
+    InstructionInput,
     Keypair,
     SolanaSigner,
     Transaction,
@@ -334,6 +335,16 @@ export interface DeployProgramResult {
     signatures: string[];
 }
 
+export interface ResolvedLookupTable {
+    accountKey: PublicKey;
+    addresses: PublicKey[];
+}
+
+export interface ResolvedLookupTables {
+    resolved: ResolvedLookupTable[];
+    maxExtendedSlot: bigint;
+}
+
 export interface Client {
     latestBlockhash(): Promise<string>;
     requestAirdrop(pubkey: PubkeyInput, lamports: number): Promise<string>;
@@ -403,4 +414,38 @@ export interface Client {
             immutable?: boolean;
         },
     ): Promise<DeployProgramResult>;
+    createLookupTable(
+        payer: SolanaSigner,
+        addresses: PublicKey[],
+    ): Promise<PublicKey>;
+    resolveLookupTables(
+        lookupTables: PublicKey[],
+        opts?: { label?: string; warmup?: boolean },
+    ): Promise<ResolvedLookupTables>;
+    exceedsWireLimit(
+        payer: SolanaSigner,
+        instructions: InstructionInput[],
+        opts?: {
+            lookupTables?: PublicKey[];
+            extraSigners?: SolanaSigner[];
+            label?: string;
+            maxWireSize?: number;
+            warmup?: boolean;
+        },
+    ): Promise<boolean>;
+    autoAlt(
+        payer: SolanaSigner,
+        tx: VersionedTransaction,
+        instructions: InstructionInput[],
+        opts?: { maxWireSize?: number },
+    ): Promise<ResolvedLookupTable | null>;
+    ensureLookupTableInstructionCoverage(
+        payer: SolanaSigner,
+        lookupTables: PublicKey[],
+        instructions: InstructionInput[],
+    ): Promise<PublicKey[]>;
+    deactivateLookupTable(
+        authority: SolanaSigner,
+        lookupTable: PublicKey,
+    ): Promise<string>;
 }

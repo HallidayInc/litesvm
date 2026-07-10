@@ -5,8 +5,10 @@ import type {
     TransactionResultEnvelope,
     TransactionResultErr,
 } from "../litesvm.ts";
+import type { InstructionInput } from "../solana.ts";
 import {
     ADDRESS_LOOKUP_TABLE_PROGRAM_ID,
+    AddressLookupTableProgram,
     BPF_LOADER_UPGRADEABLE_ID,
     BPF_LOADER_V1_ID,
     BPF_LOADER_V2_ID,
@@ -20,6 +22,7 @@ import {
     getSPLAssociatedTokenAddress,
     Keypair,
     LOADER_V4_ID,
+    MessageV0,
     parseAltAccount,
     PublicKey,
     SolanaSigner,
@@ -50,10 +53,15 @@ import type {
 } from "./types.ts";
 import { rawInnerInstructionsToApi, toPubkey } from "./types.ts";
 import {
+    altKeysFromIxs,
+    altKeysFromTx,
     enforceTxWireSize,
+    ensureLookupTableCoverage,
     isVersioned,
+    MAX_TX_WIRE_SIZE,
     PROGRAM_DATA_HEADER_SIZE,
     requiredAccountExtensions,
+    resolveLookupTables,
     tokenProgramForMintAccount,
 } from "./utils.ts";
 
@@ -788,18 +796,19 @@ export class LocalClient implements Client {
         });
     }
 
-    /**
-     * Inject a ready-to-use Address Lookup Table directly into the SVM, skipping
-     * the on-chain create/extend (and its slot-activation delay). For litesvm
-     * tests that need a v0 tx to reference many accounts under the size limit.
-     * Returns the table address (caller-supplied or a deterministic default).
-     */
-    injectAddressLookupTable(
-        address: PublicKey,
+    async createLookupTable(
+        payer: SolanaSigner,
         addresses: PublicKey[],
-        authority?: PublicKey,
-    ): PublicKey {
-        const data = buildAltAccountData(addresses, authority ?? address);
+    ): Promise<PublicKey> {
+        const kp = await Keypair.generate();
+        const address = kp.publicKey;
+        const authority = payer.getPublicKey();
+        const current_slot = this.#svm.getClockInfo().slot;
+        const data = buildAltAccountData(
+            addresses,
+            authority,
+            current_slot,
+        );
         this.#svm.setAccount(address.toBytes(), {
             lamports: 1_000_000_000,
             data,
@@ -807,7 +816,108 @@ export class LocalClient implements Client {
             executable: false,
             rent_epoch: 0,
         });
+        this.#svm.warpToSlot(current_slot + 1);
         return address;
+    }
+
+    async resolveLookupTables(
+        lookupTables: PublicKey[],
+        opts?: { label?: string; warmup?: boolean },
+    ) {
+        const result = await resolveLookupTables(
+            lookupTables,
+            (lookupTable) => this.getAccount(lookupTable),
+            opts?.label,
+        );
+        if (opts?.warmup !== false && result.maxExtendedSlot > 0n) {
+            this.warpToSlot(Number(result.maxExtendedSlot + 1n));
+        }
+        return result;
+    }
+
+    async exceedsWireLimit(
+        payer: SolanaSigner,
+        instructions: InstructionInput[],
+        opts?: {
+            lookupTables?: PublicKey[];
+            extraSigners?: SolanaSigner[];
+            label?: string;
+            maxWireSize?: number;
+            warmup?: boolean;
+        },
+    ): Promise<boolean> {
+        const { resolved } = await this.resolveLookupTables(
+            opts?.lookupTables ?? [],
+            {
+                label: opts?.label ?? "exceedsWireLimit",
+                warmup: opts?.warmup,
+            },
+        );
+        const msg = MessageV0.fromInstructionsWithAlts({
+            payerKey: payer.getPublicKey(),
+            recentBlockhash: await this.latestBlockhash(),
+            instructions,
+            altLookupsResolved: resolved,
+        });
+        const tx = new VersionedTransaction(msg);
+        await tx.sign([payer, ...(opts?.extraSigners ?? [])]);
+        return tx.serialize().length > (opts?.maxWireSize ?? MAX_TX_WIRE_SIZE);
+    }
+
+    async autoAlt(
+        payer: SolanaSigner,
+        tx: VersionedTransaction,
+        instructions: InstructionInput[],
+        opts?: { maxWireSize?: number },
+    ) {
+        if (tx.serialize().length <= (opts?.maxWireSize ?? MAX_TX_WIRE_SIZE)) {
+            return null;
+        }
+        const addresses = altKeysFromTx(tx, instructions);
+        if (addresses.length === 0) return null;
+        return {
+            accountKey: await this.createLookupTable(payer, addresses),
+            addresses,
+        };
+    }
+
+    async ensureLookupTableInstructionCoverage(
+        payer: SolanaSigner,
+        lookupTables: PublicKey[],
+        instructions: InstructionInput[],
+    ): Promise<PublicKey[]> {
+        return await ensureLookupTableCoverage(
+            lookupTables,
+            altKeysFromIxs(instructions),
+            (lookupTable) => this.getAccount(lookupTable),
+            (missing) => this.createLookupTable(payer, missing),
+        );
+    }
+
+    async deactivateLookupTable(
+        authority: SolanaSigner,
+        lookupTable: PublicKey,
+    ): Promise<string> {
+        const authority_pk = authority.getPublicKey();
+        const ix = AddressLookupTableProgram.deactivateLookupTable({
+            lookupTable,
+            authority: authority_pk,
+        });
+        const blockhash = await this.latestBlockhash();
+        const msg = MessageV0.fromInstructions({
+            payerKey: authority_pk,
+            recentBlockhash: blockhash,
+            instructions: [ix],
+        });
+        const tx = new VersionedTransaction(msg);
+        await tx.sign([authority]);
+        const res = await this.sendTransaction(tx);
+        if (res.meta?.err) {
+            throw new Error(
+                `deactivateLookupTable failed: ${JSON.stringify(res.meta.err)}`,
+            );
+        }
+        return res.signature;
     }
 
     getTokenBalance(tokenAccount: PubkeyInput): bigint {
