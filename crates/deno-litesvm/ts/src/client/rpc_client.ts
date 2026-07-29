@@ -63,7 +63,11 @@ export class RpcClient implements Client {
         return this.#endpoint;
     }
 
-    async call<T>(method: string, params: unknown[]): Promise<T> {
+    async call<T>(
+        method: string,
+        params: unknown[],
+        opts?: { signal?: AbortSignal },
+    ): Promise<T> {
         const payload = {
             jsonrpc: "2.0",
             id: crypto.randomUUID(),
@@ -74,6 +78,7 @@ export class RpcClient implements Client {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify(payload),
+            signal: opts?.signal,
         });
         const json = await res.json();
         if (json.error) throw new Error(json.error.message ?? "RPC error");
@@ -82,13 +87,13 @@ export class RpcClient implements Client {
 
     async getAccount(
         pubkey: PubkeyInput,
-        _opts?: { localOnly?: boolean },
+        opts?: { localOnly?: boolean; signal?: AbortSignal },
     ): Promise<SerializableAccount | null> {
         const pk = toPubkey(pubkey);
         const result = await this.call<{ value: unknown }>("getAccountInfo", [
             pk.toBase58(),
             { encoding: "base64" },
-        ]);
+        ], { signal: opts?.signal });
         return normalizeAccount(result.value);
     }
 
@@ -152,12 +157,17 @@ export class RpcClient implements Client {
         };
     }
 
-    async getNativeBalance(pubkey: PubkeyInput): Promise<number> {
+    async getNativeBalance(
+        pubkey: PubkeyInput,
+        opts?: { signal?: AbortSignal },
+    ): Promise<number> {
         const pk = toPubkey(pubkey);
         const result = await this.call<{
             context: { slot: number };
             value: number;
-        }>("getBalance", [pk.toBase58(), { commitment: "confirmed" }]);
+        }>("getBalance", [pk.toBase58(), { commitment: "confirmed" }], {
+            signal: opts?.signal,
+        });
         return result.value;
     }
 
@@ -168,23 +178,24 @@ export class RpcClient implements Client {
         ]);
     }
 
-    async getSPLTokenAccountBalance(
+    async getTokenBalance(
         mint: PubkeyInput,
         owner: PubkeyInput,
+        opts?: { signal?: AbortSignal },
     ): Promise<SPLTokenAmount> {
         // Detect Token-2022 from the mint's owner so the ATA derivation matches
         // where Token-2022 mints (PYUSD etc) live — otherwise the default
         // TokenkegQ ATA lookup misses any Token-2022 holder and silently
         // reports a zero balance.
         const mint_pk = toPubkey(mint);
-        const mint_acc = await this.getAccount(mint_pk);
+        const mint_acc = await this.getAccount(mint_pk, opts);
         const token_program = tokenProgramForMintAccount(mint_acc);
         const ata = await getSPLAssociatedTokenAddress(
             mint_pk,
             toPubkey(owner),
             token_program,
         );
-        const account = await this.getAccount(ata);
+        const account = await this.getAccount(ata, opts);
         if (!account) {
             return {
                 amount: "0",
@@ -198,7 +209,7 @@ export class RpcClient implements Client {
             value: SPLTokenAmount;
         }>("getTokenAccountBalance", [ata.toBase58(), {
             commitment: "confirmed",
-        }]);
+        }], { signal: opts?.signal });
         return result.value;
     }
 

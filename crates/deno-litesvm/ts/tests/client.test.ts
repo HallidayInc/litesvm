@@ -360,7 +360,7 @@ Deno.test(
         );
 
         // Verify the hijacked balance
-        const hijackedBalanceResult = await client.getSPLTokenAccountBalance(
+        const hijackedBalanceResult = await client.getTokenBalance(
             usdcMint,
             sender.publicKey,
         );
@@ -398,11 +398,11 @@ Deno.test(
         );
 
         // Verify final balances
-        const senderFinalBalanceResult = await client.getSPLTokenAccountBalance(
+        const senderFinalBalanceResult = await client.getTokenBalance(
             usdcMint,
             sender.publicKey,
         );
-        const recipientFinalBalanceResult = await client.getSPLTokenAccountBalance(
+        const recipientFinalBalanceResult = await client.getTokenBalance(
             usdcMint,
             recipient.publicKey,
         );
@@ -528,7 +528,7 @@ Deno.test(
             );
 
             // Verify
-            const finalBalanceResult = await client.getSPLTokenAccountBalance(
+            const finalBalanceResult = await client.getTokenBalance(
                 usdcMint,
                 recipient.publicKey,
             );
@@ -617,7 +617,7 @@ Deno.test(
             "Hijacked USDC transfer should succeed",
         );
 
-        const recipientFinalBalanceResult = await client.getSPLTokenAccountBalance(
+        const recipientFinalBalanceResult = await client.getTokenBalance(
             usdcMint,
             recipient.publicKey,
         );
@@ -703,7 +703,7 @@ Deno.test("fork client: getTokenAccountBalance via transport", async () => {
     );
 
     // getTokenAccountBalance should return the balance through the client
-    const tokenBalance = await client.getSPLTokenAccountBalance(
+    const tokenBalance = await client.getTokenBalance(
         mint,
         owner.publicKey,
     );
@@ -1241,7 +1241,7 @@ function encodeBase64Bytes(bytes: Uint8Array): string {
 }
 
 /**
- * A JSON-RPC stub that answers only what `getSPLTokenAccountBalance` asks, and
+ * A JSON-RPC stub that answers only what `getTokenBalance` asks, and
  * records which accounts were looked up. Only `funded_ata` holds a token
  * account, so the returned balance proves which address the client derived.
  */
@@ -1323,7 +1323,7 @@ Deno.test("rpc client reads spl balances from the default associated token accou
         amount: "999",
     });
     try {
-        const balance = await new RpcClient(url).getSPLTokenAccountBalance(
+        const balance = await new RpcClient(url).getTokenBalance(
             mint,
             owner,
         );
@@ -1352,7 +1352,7 @@ Deno.test("rpc client reads token-2022 balances from the token-2022 associated t
         amount: "12345",
     });
     try {
-        const balance = await new RpcClient(url).getSPLTokenAccountBalance(
+        const balance = await new RpcClient(url).getTokenBalance(
             mint,
             owner,
         );
@@ -1383,7 +1383,7 @@ Deno.test("local client forks token balances it has not been seeded with", async
     });
     try {
         const client = new LocalClient({ rpcEndpoint: url });
-        const balance = await client.getSPLTokenAccountBalance(mint, owner);
+        const balance = await client.getTokenBalance(mint, owner);
         assertEquals(balance.amount, "777");
     } finally {
         await server.shutdown();

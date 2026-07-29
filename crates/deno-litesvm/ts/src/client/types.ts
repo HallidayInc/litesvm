@@ -350,7 +350,7 @@ export interface Client {
     requestAirdrop(pubkey: PubkeyInput, lamports: number): Promise<string>;
     getAccount(
         pubkey: PubkeyInput,
-        opts?: { localOnly?: boolean },
+        opts?: { localOnly?: boolean; signal?: AbortSignal },
     ): Promise<SerializableAccount | null>;
     loadAccounts(
         pubkeys: PubkeyInput[],
@@ -371,10 +371,14 @@ export interface Client {
             replaceRecentBlockhash?: boolean;
         },
     ): Promise<SimulationResult>;
-    getNativeBalance(pubkey: PubkeyInput): Promise<number>;
-    getSPLTokenAccountBalance(
+    getNativeBalance(
+        pubkey: PubkeyInput,
+        opts?: { signal?: AbortSignal },
+    ): Promise<number>;
+    getTokenBalance(
         mint: PubkeyInput,
         owner: PubkeyInput,
+        opts?: { signal?: AbortSignal },
     ): Promise<SPLTokenAmount>;
     getSPLTokenAccountDelegate(
         mint: PubkeyInput,

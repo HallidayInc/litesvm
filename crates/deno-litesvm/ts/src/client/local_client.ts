@@ -123,7 +123,7 @@ export class LocalClient implements Client {
 
     async getAccount(
         pubkey: PubkeyInput,
-        opts?: { localOnly?: boolean },
+        opts?: { localOnly?: boolean; signal?: AbortSignal },
     ): Promise<SerializableAccount | null> {
         const pk = toPubkey(pubkey);
 
@@ -135,7 +135,7 @@ export class LocalClient implements Client {
         // event-page reads — so a miss returns null fast instead of a slow
         // round-trip that can never succeed).
         if (this.#autoFetch && !opts?.localOnly) {
-            const remoteAccount = await this.#rpc.getAccount(pk);
+            const remoteAccount = await this.#rpc.getAccount(pk, opts);
             if (remoteAccount) {
                 this.#svm.setAccount(pk.toBytes(), remoteAccount);
                 this.#loadedAccounts.add(pk.toBase58());
@@ -160,14 +160,18 @@ export class LocalClient implements Client {
         return results;
     }
 
-    async getNativeBalance(pubkey: PubkeyInput): Promise<number> {
-        const account = await this.getAccount(pubkey);
+    async getNativeBalance(
+        pubkey: PubkeyInput,
+        opts?: { signal?: AbortSignal },
+    ): Promise<number> {
+        const account = await this.getAccount(pubkey, opts);
         return account?.lamports ?? 0;
     }
 
-    async getSPLTokenAccountBalance(
+    async getTokenBalance(
         mint: PubkeyInput,
         owner: PubkeyInput,
+        opts?: { signal?: AbortSignal },
     ): Promise<SPLTokenAmount> {
         // Detect Token-2022 from the mint's owner program so the ATA
         // derivation matches where Token-2022 mints (PYUSD etc) actually
@@ -179,14 +183,14 @@ export class LocalClient implements Client {
         // RPC. Reading the sandbox alone reports zero for every account the
         // fork has not already been told about.
         const mint_pk = toPubkey(mint);
-        const mint_acc = await this.getAccount(mint_pk);
+        const mint_acc = await this.getAccount(mint_pk, opts);
         const token_program = tokenProgramForMintAccount(mint_acc);
         const ata = await getSPLAssociatedTokenAddress(
             mint_pk,
             toPubkey(owner),
             token_program,
         );
-        const account = await this.getAccount(ata);
+        const account = await this.getAccount(ata, opts);
         if (!account || account.data.length < TOKEN_ACCOUNT_SIZE) {
             return {
                 amount: "0",
@@ -927,7 +931,7 @@ export class LocalClient implements Client {
         return res.signature;
     }
 
-    getTokenBalance(tokenAccount: PubkeyInput): bigint {
+    getTokenAccountAmount(tokenAccount: PubkeyInput): bigint {
         const pk = toPubkey(tokenAccount);
         const existing = this.#svm.getAccount(pk.toBytes());
         if (!existing) {
