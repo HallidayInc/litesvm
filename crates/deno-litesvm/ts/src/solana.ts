@@ -985,6 +985,8 @@ export class MessageV0 {
  * parts — no parallel "#parsed*" / "#raw" state hangs around. Every
  * getter / `serialize` goes through `#message.serialize()`.
  */
+const SIGNATURE_BYTES = 64;
+
 export class VersionedTransaction {
     readonly version = 0;
     #message: MessageV0;
@@ -1220,13 +1222,14 @@ export class VersionedTransaction {
     }
 
     serialize(): Uint8Array {
-        if (this.#signatures.length === 0) {
-            throw new Error("transaction not signed");
-        }
         const messageBytes = this.#message.serialize();
+        const required = this.#message.header.requiredSignatures;
+        const signatures = this.#signatures.length > 0
+            ? this.#signatures.map((s) => s.signature)
+            : Array.from({ length: required }, () => new Uint8Array(SIGNATURE_BYTES));
         const parts: number[] = [];
-        parts.push(...shortvecEncode(this.#signatures.length));
-        for (const sig of this.#signatures) parts.push(...sig.signature);
+        parts.push(...shortvecEncode(signatures.length));
+        for (const signature of signatures) parts.push(...signature);
         parts.push(...messageBytes);
         return Uint8Array.from(parts);
     }

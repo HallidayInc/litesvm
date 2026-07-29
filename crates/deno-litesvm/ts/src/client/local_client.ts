@@ -173,15 +173,20 @@ export class LocalClient implements Client {
         // derivation matches where Token-2022 mints (PYUSD etc) actually
         // live. Without this, the default-TokenkegQ ATA lookup returns
         // empty for any Token-2022 holder.
+        //
+        // Both reads go through `getAccount` rather than the sandbox directly,
+        // so a forking client can pull the mint and the token account from its
+        // RPC. Reading the sandbox alone reports zero for every account the
+        // fork has not already been told about.
         const mint_pk = toPubkey(mint);
-        const mint_acc = this.svm.getAccount(mint_pk.toBytes());
+        const mint_acc = await this.getAccount(mint_pk);
         const token_program = tokenProgramForMintAccount(mint_acc);
         const ata = await getSPLAssociatedTokenAddress(
             mint_pk,
             toPubkey(owner),
             token_program,
         );
-        const account = this.svm.getAccount(ata.toBytes());
+        const account = await this.getAccount(ata);
         if (!account || account.data.length < TOKEN_ACCOUNT_SIZE) {
             return {
                 amount: "0",
@@ -210,16 +215,18 @@ export class LocalClient implements Client {
     ): Promise<SPLTokenAccountDelegate> {
         // Detect Token-2022 from the mint's owner so the ATA derivation matches
         // where Token-2022 mints (PYUSD etc) live — otherwise the default
-        // TokenkegQ ATA lookup misses any Token-2022 holder's delegate.
+        // TokenkegQ ATA lookup misses any Token-2022 holder's delegate. Read
+        // through `getAccount` so a forking client can pull both accounts from
+        // its RPC rather than only seeing what the sandbox already holds.
         const mint_pk = toPubkey(mint);
-        const mint_acc = this.svm.getAccount(mint_pk.toBytes());
+        const mint_acc = await this.getAccount(mint_pk);
         const token_program = tokenProgramForMintAccount(mint_acc);
         const ata = await getSPLAssociatedTokenAddress(
             mint_pk,
             toPubkey(owner),
             token_program,
         );
-        const account = this.svm.getAccount(ata.toBytes());
+        const account = await this.getAccount(ata);
         if (!account || account.data.length < TOKEN_ACCOUNT_SIZE) {
             return { delegate: null, delegatedAmount: 0n };
         }

@@ -172,9 +172,17 @@ export class RpcClient implements Client {
         mint: PubkeyInput,
         owner: PubkeyInput,
     ): Promise<SPLTokenAmount> {
+        // Detect Token-2022 from the mint's owner so the ATA derivation matches
+        // where Token-2022 mints (PYUSD etc) live — otherwise the default
+        // TokenkegQ ATA lookup misses any Token-2022 holder and silently
+        // reports a zero balance.
+        const mint_pk = toPubkey(mint);
+        const mint_acc = await this.getAccount(mint_pk);
+        const token_program = tokenProgramForMintAccount(mint_acc);
         const ata = await getSPLAssociatedTokenAddress(
-            toPubkey(mint),
+            mint_pk,
             toPubkey(owner),
+            token_program,
         );
         const account = await this.getAccount(ata);
         if (!account) {
