@@ -3,16 +3,20 @@ import {
     ADDRESS_LOOKUP_TABLE_PROGRAM_ID,
     AssociatedTokenProgram,
     buildAltAccountData,
+    createTokenAccountData,
     getSPLAssociatedTokenAddress,
     type InstructionInput,
     Keypair,
     KNOWN_MINTS,
     LAMPORTS_PER_SOL,
     MessageV0,
+    MINT_ACCOUNT_SIZE,
     parseAltAccount,
     parseTokenAccountData,
     PublicKey,
     SystemProgram,
+    TOKEN_2022_PROGRAM_PUBKEY,
+    TOKEN_PROGRAM_PUBKEY,
     TokenProgram,
     Transaction,
     VersionedTransaction,
@@ -356,7 +360,7 @@ Deno.test(
         );
 
         // Verify the hijacked balance
-        const hijackedBalanceResult = await client.getSPLTokenAccountBalance(
+        const hijackedBalanceResult = await client.getTokenBalance(
             usdcMint,
             sender.publicKey,
         );
@@ -394,11 +398,11 @@ Deno.test(
         );
 
         // Verify final balances
-        const senderFinalBalanceResult = await client.getSPLTokenAccountBalance(
+        const senderFinalBalanceResult = await client.getTokenBalance(
             usdcMint,
             sender.publicKey,
         );
-        const recipientFinalBalanceResult = await client.getSPLTokenAccountBalance(
+        const recipientFinalBalanceResult = await client.getTokenBalance(
             usdcMint,
             recipient.publicKey,
         );
@@ -524,7 +528,7 @@ Deno.test(
             );
 
             // Verify
-            const finalBalanceResult = await client.getSPLTokenAccountBalance(
+            const finalBalanceResult = await client.getTokenBalance(
                 usdcMint,
                 recipient.publicKey,
             );
@@ -613,7 +617,7 @@ Deno.test(
             "Hijacked USDC transfer should succeed",
         );
 
-        const recipientFinalBalanceResult = await client.getSPLTokenAccountBalance(
+        const recipientFinalBalanceResult = await client.getTokenBalance(
             usdcMint,
             recipient.publicKey,
         );
@@ -699,7 +703,7 @@ Deno.test("fork client: getTokenAccountBalance via transport", async () => {
     );
 
     // getTokenAccountBalance should return the balance through the client
-    const tokenBalance = await client.getSPLTokenAccountBalance(
+    const tokenBalance = await client.getTokenBalance(
         mint,
         owner.publicKey,
     );
@@ -1224,4 +1228,183 @@ Deno.test("local client: immutable deploy drops the upgrade authority", async ()
     );
 
     console.log("Immutable deploy drops the upgrade authority!");
+});
+
+// ============================================================================
+// SPL vs Token-2022 balance resolution
+// ============================================================================
+
+function encodeBase64Bytes(bytes: Uint8Array): string {
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary);
+}
+
+/**
+ * A JSON-RPC stub that answers only what `getTokenBalance` asks, and
+ * records which accounts were looked up. Only `funded_ata` holds a token
+ * account, so the returned balance proves which address the client derived.
+ */
+function stubTokenRpc(opts: {
+    mint: PublicKey;
+    owner: PublicKey;
+    mint_program: string;
+    funded_ata: string;
+    amount: string;
+}) {
+    const queried: string[] = [];
+    const account = (owner: string, data: Uint8Array, lamports: number) => ({
+        lamports,
+        executable: false,
+        rentEpoch: 0,
+        owner,
+        data: [encodeBase64Bytes(data), "base64"],
+    });
+    // The amount has to live in the account bytes, not just the
+    // getTokenAccountBalance reply: LocalClient parses the token account
+    // directly, while RpcClient asks the node for the decoded balance.
+    const token_account_data = createTokenAccountData({
+        mint: opts.mint,
+        owner: opts.owner,
+        amount: BigInt(opts.amount),
+    });
+    const server = Deno.serve({ port: 0, onListen: () => {} }, async (req) => {
+        const { method, params } = await req.json();
+        const result = (value: unknown) =>
+            Response.json({ jsonrpc: "2.0", id: 1, result: value });
+        if (method === "getAccountInfo") {
+            const [address] = params as [string];
+            queried.push(address);
+            if (address === opts.mint.toBase58()) {
+                return result({
+                    value: account(
+                        opts.mint_program,
+                        new Uint8Array(MINT_ACCOUNT_SIZE),
+                        1_461_600,
+                    ),
+                });
+            }
+            if (address === opts.funded_ata) {
+                return result({
+                    value: account(
+                        opts.mint_program,
+                        token_account_data,
+                        2_039_280,
+                    ),
+                });
+            }
+            return result({ value: null });
+        }
+        if (method === "getTokenAccountBalance") {
+            return result({
+                value: {
+                    amount: opts.amount,
+                    decimals: 6,
+                    uiAmount: 0,
+                    uiAmountString: "0",
+                },
+            });
+        }
+        return result(null);
+    });
+    const url = `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`;
+    return { server, queried, url };
+}
+
+Deno.test("rpc client reads spl balances from the default associated token account", async () => {
+    const mint = PublicKey.unique();
+    const owner = PublicKey.unique();
+    const ata = await getSPLAssociatedTokenAddress(mint, owner);
+    const { server, url } = stubTokenRpc({
+        mint,
+        owner,
+        mint_program: TOKEN_PROGRAM_PUBKEY,
+        funded_ata: ata.toBase58(),
+        amount: "999",
+    });
+    try {
+        const balance = await new RpcClient(url).getTokenBalance(
+            mint,
+            owner,
+        );
+        assertEquals(balance.amount, "999");
+    } finally {
+        await server.shutdown();
+    }
+});
+
+Deno.test("rpc client reads token-2022 balances from the token-2022 associated token account", async () => {
+    const mint = PublicKey.unique();
+    const owner = PublicKey.unique();
+    const token_2022_ata = await getSPLAssociatedTokenAddress(
+        mint,
+        owner,
+        TOKEN_2022_PROGRAM_PUBKEY,
+    );
+    const spl_ata = await getSPLAssociatedTokenAddress(mint, owner);
+    // Only the Token-2022 account is funded, so deriving under the SPL program
+    // would find nothing and report a zero balance instead of the real one.
+    const { server, queried, url } = stubTokenRpc({
+        mint,
+        owner,
+        mint_program: TOKEN_2022_PROGRAM_PUBKEY,
+        funded_ata: token_2022_ata.toBase58(),
+        amount: "12345",
+    });
+    try {
+        const balance = await new RpcClient(url).getTokenBalance(
+            mint,
+            owner,
+        );
+        assertEquals(balance.amount, "12345");
+        assert(queried.includes(token_2022_ata.toBase58()));
+        assert(!queried.includes(spl_ata.toBase58()));
+    } finally {
+        await server.shutdown();
+    }
+});
+
+Deno.test("local client forks token balances it has not been seeded with", async () => {
+    const mint = PublicKey.unique();
+    const owner = PublicKey.unique();
+    const token_2022_ata = await getSPLAssociatedTokenAddress(
+        mint,
+        owner,
+        TOKEN_2022_PROGRAM_PUBKEY,
+    );
+    // Nothing is planted in the sandbox, so the balance can only be found by
+    // pulling the mint and the token account through the forking RPC.
+    const { server, url } = stubTokenRpc({
+        mint,
+        owner,
+        mint_program: TOKEN_2022_PROGRAM_PUBKEY,
+        funded_ata: token_2022_ata.toBase58(),
+        amount: "777",
+    });
+    try {
+        const client = new LocalClient({ rpcEndpoint: url });
+        const balance = await client.getTokenBalance(mint, owner);
+        assertEquals(balance.amount, "777");
+    } finally {
+        await server.shutdown();
+    }
+});
+
+Deno.test("versioned transaction serializes when unsigned", async () => {
+    const payer = await Keypair.generate();
+    const message = MessageV0.fromInstructions({
+        payerKey: payer.publicKey,
+        recentBlockhash: PublicKey.unique().toBase58(),
+        instructions: [SystemProgram.transfer(payer.publicKey, PublicKey.unique(), 1_000)],
+    });
+
+    const unsigned = new VersionedTransaction(message).serialize();
+    assertEquals(
+        VersionedTransaction.fromBytes(unsigned).signatures.length,
+        message.header.requiredSignatures,
+    );
+
+    const signed = new VersionedTransaction(message);
+    await signed.sign([payer]);
+    assertEquals(unsigned.length, signed.serialize().length);
 });

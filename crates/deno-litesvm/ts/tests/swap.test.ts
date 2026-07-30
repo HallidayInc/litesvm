@@ -204,7 +204,7 @@ Deno.test(
         assertEquals(result.status, "ok", "USDC → SOL swap should succeed");
 
         // Verify: USDC balance should be 0 (or near 0)
-        const finalUsdcBalance = client.getTokenBalance(swapperUsdcAta);
+        const finalUsdcBalance = client.getTokenAccountAmount(swapperUsdcAta);
         assertEquals(finalUsdcBalance, BigInt(0), "All USDC should be swapped");
 
         // Verify: SOL balance should have increased
@@ -266,7 +266,7 @@ Deno.test(
         assertEquals(result.status, "ok", "SOL → USDC swap should succeed");
 
         // Verify: USDC balance should be > 0
-        const finalUsdcBalance = client.getTokenBalance(swapperUsdcAta);
+        const finalUsdcBalance = client.getTokenAccountAmount(swapperUsdcAta);
         assert(
             finalUsdcBalance > BigInt(0),
             `Should have received USDC from swap (got ${finalUsdcBalance})`,
@@ -340,11 +340,11 @@ Deno.test(
         assertEquals(result.status, "ok", "USDT → USDC swap should succeed");
 
         // Verify: USDT balance should be 0
-        const finalUsdtBalance = client.getTokenBalance(swapperUsdtAta);
+        const finalUsdtBalance = client.getTokenAccountAmount(swapperUsdtAta);
         assertEquals(finalUsdtBalance, BigInt(0), "All USDT should be swapped");
 
         // Verify: USDC balance should be > 0
-        const finalUsdcBalance = client.getTokenBalance(swapperUsdcAta);
+        const finalUsdcBalance = client.getTokenAccountAmount(swapperUsdcAta);
         assert(
             finalUsdcBalance > BigInt(0),
             `Should have received USDC from swap (got ${finalUsdcBalance})`,
