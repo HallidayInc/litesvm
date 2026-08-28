@@ -15,7 +15,7 @@ use {
         compiled_instruction::CompiledInstruction as CompiledInstructionOriginal,
         inner_instruction::InnerInstruction as InnerInstructionOriginal,
     },
-    solana_transaction_context::TransactionReturnData as TransactionReturnDataOriginal,
+    solana_transaction_context::transaction::TransactionReturnData as TransactionReturnDataOriginal,
 };
 
 #[derive(Debug, Clone)]
@@ -157,7 +157,7 @@ to_string_js!(FailedTransactionMetadata);
 #[napi]
 pub struct AddressAndAccount {
     pub address: Uint8Array,
-    account: Account,
+    pub(crate) account: Account,
 }
 
 #[napi]

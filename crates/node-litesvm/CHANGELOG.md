@@ -2,6 +2,66 @@
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-24
+
+### Changed
+
+- Bump to Agave 4.2 and support V1 transactions [(#399)](https://github.com/LiteSVM/litesvm/pull/399).
+- Bump `napi` to 3.12 [(#408)](https://github.com/LiteSVM/litesvm/pull/408).
+
+### Removed
+
+- Remove the `bigModularExponentiationBaseCost` and `bigModularExponentiationCostDivisor` compute budget accessors, which no longer exist upstream [(#399)](https://github.com/LiteSVM/litesvm/pull/399).
+
+### Fixed
+
+- Allow `setSlotHashes` to accept plain JavaScript objects [(#400)](https://github.com/LiteSVM/litesvm/pull/400).
+- Build the published binaries with the `register-tracing` feature enabled by default, so setting `SBF_TRACE_DIR` now produces SBPF register traces instead of being silently ignored. Previously this only worked for Rust consumers who opted into the feature, leaving tools such as `sbpf-coverage` reporting 0% coverage for anyone driving LiteSVM from JavaScript [(#397)](https://github.com/LiteSVM/litesvm/pull/397).
+- Clear x87 FPU state after transaction execution [(#398)](https://github.com/LiteSVM/litesvm/pull/398).
+
+## [1.3.0] - 2026-07-13
+
+### Added
+
+- Add `LiteSVM.getProgramAccounts` to return all accounts owned by a given program, together with their addresses [(#370)](https://github.com/LiteSVM/litesvm/pull/370).
+- Expose activation slots on active feature metadata in the Node bindings [(#378)](https://github.com/LiteSVM/litesvm/pull/378).
+
+### Changed
+
+- Bump to Agave 4.1 [(#373)](https://github.com/LiteSVM/litesvm/pull/373).
+- Use `wincode` for sysvar serialization in the native bindings [(#376)](https://github.com/LiteSVM/litesvm/pull/376).
+
+## [1.2.1] - 2026-07-01
+
+### Fixed
+
+- Align the native binding version checks with the litesvm `v0.13.1`.
+
+## [1.2.0] - 2026-06-19
+
+### Added
+
+- Add `sbpf-debugger` feature exposing GDB remote stub and trace filtering [(#354)](https://github.com/LiteSVM/litesvm/pull/354).
+
+### Changed
+
+- Bump to Agave 4.0 [(#322)](https://github.com/LiteSVM/litesvm/pull/322).
+- Update Solana JS dependencies (`@solana/kit`, `@solana-program/system`, `@solana-program/token`).
+
+### Fixed
+
+- Fix the balance null check in the minimal README example [(#348)](https://github.com/LiteSVM/litesvm/pull/348).
+
+## [1.1.0] - 2026-05-20
+
+### Changed
+
+- Refresh the Node wrapper documentation and README [(#328)](https://github.com/LiteSVM/litesvm/pull/328).
+
+### Fixed
+
+- Replace an `unwrap` with proper error handling for owner addresses [(#323)](https://github.com/LiteSVM/litesvm/pull/323).
+
 ## [1.0.0] - 2026-03-30
 
 ### Changed

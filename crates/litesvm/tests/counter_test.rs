@@ -5,6 +5,7 @@ use {
     solana_address_lookup_table_interface::instruction::{
         create_lookup_table, extend_lookup_table,
     },
+    solana_clock::Clock,
     solana_instruction::{account_meta::AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_message::{
@@ -104,7 +105,9 @@ fn test_address_lookup_table() {
             ..Default::default()
         },
     );
-    let (lookup_table_ix, lookup_table_address) = create_lookup_table(payer_pk, payer_pk, 0);
+    let recent_slot = svm.get_sysvar::<Clock>().slot;
+    let (lookup_table_ix, lookup_table_address) =
+        create_lookup_table(payer_pk, payer_pk, recent_slot);
     let extend_ix = extend_lookup_table(
         lookup_table_address,
         payer_pk,
@@ -131,7 +134,7 @@ fn test_address_lookup_table() {
     .unwrap();
     let counter_tx =
         VersionedTransaction::try_new(VersionedMessage::V0(counter_msg), &[&payer_kp]).unwrap();
-    svm.warp_to_slot(1); // can't use the lookup table in the same slot
+    svm.warp_to_slot(recent_slot + 1);
     svm.send_transaction(counter_tx).unwrap();
 }
 
@@ -175,7 +178,7 @@ fn test_register_tracing_handler() {
         litesvm::InvocationInspectCallback,
         solana_program_runtime::invoke_context::{Executable, InvokeContext, RegisterTrace},
         solana_transaction::{sanitized::SanitizedTransaction, Address},
-        solana_transaction_context::{IndexOfAccount, InstructionContext},
+        solana_transaction_context::{instruction::InstructionContext, IndexOfAccount},
         std::{
             collections::HashMap,
             sync::{Arc, Mutex},
@@ -218,8 +221,8 @@ fn test_register_tracing_handler() {
                     )
                 })
                 .filter(|(_registers, insn)| {
-                    insn.opc & 7 == solana_program_runtime::solana_sbpf::ebpf::BPF_JMP
-                        && insn.opc != solana_program_runtime::solana_sbpf::ebpf::BPF_JA
+                    insn.opc & 7 == solana_program_runtime::solana_sbpf::ebpf::BPF_JMP64
+                        && insn.opc != solana_program_runtime::solana_sbpf::ebpf::JA
                 })
                 .count();
             let entry = tracing_data.entry(*program_id).or_insert(TracingData {
@@ -240,13 +243,16 @@ fn test_register_tracing_handler() {
             _: &LiteSVM,
             _: &SanitizedTransaction,
             _: &[IndexOfAccount],
-            _: &InvokeContext,
+            _: &mut InvokeContext,
+            _register_tracing_enabled: bool,
         ) {
         }
 
         fn after_invocation(
             &self,
             _: &LiteSVM,
+            _: &SanitizedTransaction,
+            _: &[IndexOfAccount],
             invoke_context: &InvokeContext,
             register_tracing_enabled: bool,
         ) {

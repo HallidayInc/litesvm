@@ -127,10 +127,6 @@ export declare class ComputeBudget {
   get altBn128PairingOnePairCostFirst(): bigint
   set altBn128PairingOnePairCostOther(val: bigint)
   get altBn128PairingOnePairCostOther(): bigint
-  set bigModularExponentiationBaseCost(val: bigint)
-  get bigModularExponentiationBaseCost(): bigint
-  set bigModularExponentiationCostDivisor(val: bigint)
-  get bigModularExponentiationCostDivisor(): bigint
   set poseidonCostCoefficientA(val: bigint)
   get poseidonCostCoefficientA(): bigint
   set poseidonCostCoefficientC(val: bigint)
@@ -307,6 +303,8 @@ export declare class LiteSvm {
   minimumBalanceForRentExemption(dataLen: bigint): bigint
   /** Returns all information associated with the account of the provided pubkey. */
   getAccount(pubkey: Uint8Array): Account | null
+  /** Returns all accounts owned by the given program, together with their addresses. */
+  getProgramAccounts(programId: Uint8Array): Array<AddressAndAccount>
   /** Sets all information associated with the account of the provided pubkey. */
   setAccount(pubkey: Uint8Array, data: Account): void
   /** Gets the balance of the provided account pubkey. */
@@ -344,7 +342,7 @@ export declare class LiteSvm {
   getLastRestartSlot(): bigint
   setLastRestartSlot(slot: bigint): void
   getSlotHashes(): Array<SlotHash>
-  setSlotHashes(hashes: Array<SlotHash>): void
+  setSlotHashes(hashes: Array<SlotHashInput>): void
   getSlotHistory(): SlotHistory
   setSlotHistory(history: SlotHistory): void
   getStakeHistory(): StakeHistory
@@ -362,7 +360,13 @@ export declare class Rent {
   constructor(lamportsPerByteYear: bigint, exemptionThreshold: number, burnPercent: number)
   /** Initialize rent with the default Solana settings. */
   static default(): Rent
-  /** Rental rate in lamports/byte-year. */
+  /**
+   * Rental rate in lamports/byte-year.
+   *
+   * Note: since SIMD-0194 the underlying sysvar stores lamports/byte with
+   * the exemption threshold folded in (default 6960, threshold 1.0), so on
+   * current clusters this returns double the historical 3480 value.
+   */
   get lamportsPerByteYear(): bigint
   set lamportsPerByteYear(val: bigint)
   /** Amount of time (in years) a balance must include rent for the account to be rent exempt. */
@@ -407,6 +411,10 @@ export declare class Rent {
   /**
    * Rent due for account that is known to be not exempt.
    *
+   * Note: since SIMD-0194 the underlying rate is lamports/byte with the
+   * exemption threshold folded in, so on current clusters this returns
+   * double the pre-SIMD-0194 amount for the same inputs.
+   *
    * @param dataLen - The account data length.
    * @param yearsElapsed - Time elapsed in years.
    * @returns The amount due.
@@ -422,6 +430,10 @@ export declare class Rent {
    * Creates a `Rent` that is scaled based on the number of slots in an epoch.
    *
    * This is used for testing.
+   *
+   * @deprecated Epoch-based rent scaling was removed upstream (SIMD-0194);
+   * the argument is ignored and the default rent is returned. The old
+   * scaling never affected the rent-exempt minimum balance.
    */
   static withSlotsPerEpoch(slotsPerEpoch: bigint): Rent
   toString(): string
@@ -572,6 +584,11 @@ export declare const enum InstructionErrorFieldless {
   MaxInstructionTraceLengthExceeded = 50,
   BuiltinProgramsMustConsumeComputeUnits = 51,
   BorshIoError = 52
+}
+
+export interface SlotHashInput {
+  slot: bigint
+  hash: string
 }
 
 export declare const enum SlotHistoryCheck {

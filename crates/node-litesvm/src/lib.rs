@@ -6,15 +6,20 @@ use {
         compute_budget::ComputeBudget,
         feature_set::FeatureSet,
         sysvar::{
-            clock::Clock, epoch_rewards::EpochRewards, epoch_schedule::EpochSchedule, rent::Rent,
-            slot_hashes::SlotHash, slot_history::SlotHistory, stake_history::StakeHistory,
+            clock::Clock,
+            epoch_rewards::EpochRewards,
+            epoch_schedule::EpochSchedule,
+            rent::Rent,
+            slot_hashes::{SlotHash, SlotHashInput},
+            slot_history::SlotHistory,
+            stake_history::StakeHistory,
         },
         transaction_metadata::{
-            FailedTransactionMetadata, SimulatedTransactionInfo, TransactionMetadata,
+            AddressAndAccount, FailedTransactionMetadata, SimulatedTransactionInfo,
+            TransactionMetadata,
         },
         util::{convert_pubkey, try_parse_hash},
     },
-    bincode::deserialize,
     litesvm::{
         error::LiteSVMError,
         types::{
@@ -33,9 +38,10 @@ use {
     solana_signature::Signature,
     solana_slot_hashes::SlotHashes,
     solana_slot_history::SlotHistory as SlotHistoryOriginal,
-    solana_stake_interface::stake_history::StakeHistory as StakeHistoryOriginal,
+    solana_stake_history::StakeHistory as StakeHistoryOriginal,
     solana_transaction::{versioned::VersionedTransaction, Transaction},
     util::{bigint_to_u64, bigint_to_usize},
+    wincode::deserialize,
 };
 mod account;
 mod compute_budget;
@@ -183,6 +189,19 @@ impl LiteSvm {
     /// Returns all information associated with the account of the provided pubkey.
     pub fn get_account(&self, pubkey: &[u8]) -> Option<Account> {
         self.0.get_account(&convert_pubkey(pubkey)).map(Account)
+    }
+
+    #[napi]
+    /// Returns all accounts owned by the given program, together with their addresses.
+    pub fn get_program_accounts(&self, program_id: &[u8]) -> Vec<AddressAndAccount> {
+        self.0
+            .get_program_accounts(&convert_pubkey(program_id))
+            .into_iter()
+            .map(|(address, account)| AddressAndAccount {
+                address: Uint8Array::with_data_copied(address.to_bytes()),
+                account: Account(account),
+            })
+            .collect()
     }
 
     #[napi]
@@ -386,7 +405,7 @@ impl LiteSvm {
     }
 
     #[napi]
-    pub fn set_slot_hashes(&mut self, hashes: Vec<&SlotHash>) -> Result<()> {
+    pub fn set_slot_hashes(&mut self, hashes: Vec<SlotHashInput>) -> Result<()> {
         let mut intermediate: Vec<(u64, solana_hash::Hash)> = Vec::with_capacity(hashes.len());
         for h in hashes {
             let converted_hash = try_parse_hash(&h.hash)?;

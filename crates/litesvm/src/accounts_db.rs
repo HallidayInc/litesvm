@@ -5,12 +5,11 @@ use std::collections::HashMap;
 use {
     crate::error::{InvalidSysvarDataError, LiteSVMError},
     log::error,
-    serde::de::DeserializeOwned,
-    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_address::Address,
     solana_address_lookup_table_interface::{error::AddressLookupError, state::AddressLookupTable},
     solana_clock::Clock,
-    solana_instruction::error::InstructionError,
+    solana_instruction_error::InstructionError,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_loader_v4_interface::state::LoaderV4State,
     solana_message::{
@@ -19,10 +18,13 @@ use {
     },
     solana_nonce as nonce,
     solana_program_runtime::{
+        invoke_context::InvokeContext,
         loaded_programs::{
-            LoadProgramMetrics, ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType,
-            ProgramCacheForTxBatch, ProgramRuntimeEnvironments,
+            ProgramCacheForTxBatch, ProgramRuntimeEnvironment, ProgramRuntimeEnvironments,
         },
+        program_cache_entry::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
+        program_metrics::LoadProgramMetrics,
+        solana_sbpf::program::BuiltinProgram,
         sysvar_cache::SysvarCache,
     },
     solana_sdk_ids::{
@@ -38,6 +40,7 @@ use {
     solana_sysvar::Sysvar,
     solana_transaction_error::{AddressLoaderError, TransactionError},
     std::sync::Arc,
+    wincode::DeserializeOwned,
 };
 
 const FEES_ID: Address = Address::from_str_const("SysvarFees111111111111111111111111111111111");
@@ -52,7 +55,7 @@ fn handle_sysvar<T>(
     address: Address,
 ) -> Result<(), InvalidSysvarDataError>
 where
-    T: Sysvar + DeserializeOwned,
+    T: Sysvar + DeserializeOwned<Dst = T>,
 {
     cache.reset();
     cache.fill_missing_entries(|pubkey, set_sysvar| {
@@ -62,16 +65,44 @@ where
             set_sysvar(acc.data())
         }
     });
-    let _parsed: T = bincode::deserialize(account.data()).map_err(|_| err_variant)?;
+    let _parsed = T::deserialize_from(account.data()).map_err(|_| err_variant)?;
     Ok(())
 }
 
-#[derive(Clone, Default)]
 pub struct AccountsDb {
     pub inner: HashMap<Address, AccountSharedData>,
     pub programs_cache: ProgramCacheForTxBatch,
     pub sysvar_cache: SysvarCache,
     pub environments: ProgramRuntimeEnvironments,
+}
+
+impl Clone for AccountsDb {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            programs_cache: self.programs_cache.clone(),
+            sysvar_cache: self.sysvar_cache.clone(),
+            environments: ProgramRuntimeEnvironments::new(
+                self.environments.get_env_for_execution().clone(),
+                self.environments.get_env_for_deployment().clone(),
+            ),
+        }
+    }
+}
+
+impl Default for AccountsDb {
+    fn default() -> Self {
+        let env = ProgramRuntimeEnvironment::from(
+            BuiltinProgram::<InvokeContext<'static, 'static>>::new_mock(),
+        );
+
+        Self {
+            inner: HashMap::default(),
+            programs_cache: ProgramCacheForTxBatch::new(0),
+            sysvar_cache: SysvarCache::default(),
+            environments: ProgramRuntimeEnvironments::new(env.clone(), env),
+        }
+    }
 }
 
 impl AccountsDb {
@@ -125,14 +156,15 @@ impl AccountsDb {
         #[allow(deprecated)]
         match pubkey {
             CLOCK_ID => {
-                let parsed: Clock = bincode::deserialize(account.data())
+                let parsed = Clock::deserialize_from(account.data())
                     .map_err(|_| InvalidSysvarDataError::Clock)?;
                 self.programs_cache.set_slot_for_tests(parsed.slot);
-                let mut accounts_clone = self.inner.clone();
-                accounts_clone.insert(pubkey, account.clone());
+                let accounts = &self.inner;
                 cache.reset();
-                cache.fill_missing_entries(|pubkey, set_sysvar| {
-                    if let Some(acc) = accounts_clone.get(pubkey) {
+                cache.fill_missing_entries(|sysvar_pubkey, set_sysvar| {
+                    if *sysvar_pubkey == pubkey {
+                        set_sysvar(account.data())
+                    } else if let Some(acc) = accounts.get(sysvar_pubkey) {
                         set_sysvar(acc.data())
                     }
                 });
@@ -195,7 +227,7 @@ impl AccountsDb {
                 )?;
             }
             STAKE_HISTORY_ID => {
-                handle_sysvar::<solana_stake_interface::stake_history::StakeHistory>(
+                handle_sysvar::<solana_stake_history::StakeHistory>(
                     cache,
                     StakeHistory,
                     account,
@@ -211,6 +243,39 @@ impl AccountsDb {
     /// Skip the executable() checks for builtin accounts
     pub(crate) fn add_builtin_account(&mut self, address: Address, data: AccountSharedData) {
         self.inner.insert(address, data);
+    }
+
+    /// Rebuilds the sysvar cache from account data already present in `self.inner`.
+    #[cfg(feature = "persistence-internal")]
+    pub(crate) fn rebuild_sysvar_cache(&mut self) {
+        self.sysvar_cache.reset();
+        let accounts = &self.inner;
+        self.sysvar_cache
+            .fill_missing_entries(|pubkey, set_sysvar| {
+                if let Some(acc) = accounts.get(pubkey) {
+                    set_sysvar(acc.data())
+                }
+            });
+        if let Ok(clock) = self.sysvar_cache.get_clock() {
+            self.programs_cache.set_slot_for_tests(clock.slot);
+        }
+    }
+
+    /// Scans all accounts for executable BPF programs and loads them into the program cache.
+    #[cfg(feature = "persistence-internal")]
+    pub(crate) fn load_all_existing_programs(&mut self) -> Result<(), LiteSVMError> {
+        let executable_keys = self
+            .inner
+            .iter()
+            .filter(|(_, acc)| acc.executable() && acc.owner() != &native_loader::ID)
+            .map(|(k, _)| *k);
+
+        for key in executable_keys {
+            let account = self.inner.get(&key).unwrap().clone();
+            let loaded = self.load_program(&account)?;
+            self.programs_cache.replenish(key, Arc::new(loaded));
+        }
+        Ok(())
     }
 
     pub(crate) fn sync_accounts(
@@ -235,13 +300,13 @@ impl AccountsDb {
         let metrics = &mut LoadProgramMetrics::default();
 
         let owner = program_account.owner();
-        let program_runtime_v1 = self.environments.program_runtime_v1.clone();
-        let slot = self.sysvar_cache.get_clock().unwrap().slot;
+        let program_runtime_for_execution = self.environments.get_env_for_execution().clone();
+        let slot = self.sysvar_cache.get_clock().map(|c| c.slot).unwrap_or(0);
 
         if bpf_loader::check_id(owner) || bpf_loader_deprecated::check_id(owner) {
             ProgramCacheEntry::new(
                 owner,
-                program_runtime_v1,
+                program_runtime_for_execution,
                 slot,
                 slot,
                 program_account.data(),
@@ -255,7 +320,7 @@ impl AccountsDb {
         } else if bpf_loader_upgradeable::check_id(owner) {
             let Ok(UpgradeableLoaderState::Program {
                 programdata_address,
-            }) = program_account.state()
+            }) = UpgradeableLoaderState::deserialize_from(program_account.data())
             else {
                 error!(
                     "Program account data does not deserialize to UpgradeableLoaderState::Program"
@@ -275,7 +340,7 @@ impl AccountsDb {
             {
                 ProgramCacheEntry::new(
                     owner,
-                    program_runtime_v1,
+                    program_runtime_for_execution,
                     slot,
                     slot,
                     programdata,
@@ -298,7 +363,7 @@ impl AccountsDb {
             {
                 ProgramCacheEntry::new(
                     &loader_v4::id(),
-                    program_runtime_v1,
+                    program_runtime_for_execution,
                     slot,
                     slot,
                     elf_bytes,
@@ -399,7 +464,7 @@ impl AccountsDb {
         } else if bpf_loader_upgradeable::check_id(owner) {
             let Ok(UpgradeableLoaderState::Program {
                 programdata_address,
-            }) = program_account.state()
+            }) = UpgradeableLoaderState::deserialize_from(program_account.data())
             else {
                 return Err(InstructionError::InvalidAccountData);
             };
