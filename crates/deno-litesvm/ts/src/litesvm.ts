@@ -7,11 +7,6 @@ function resolveLib(): URL {
 }
 
 const { symbols } = dlopen(resolveLib(), {
-    create_default: {
-        parameters: [],
-        result: "u32",
-        nonblocking: false,
-    },
     create_basic: {
         parameters: [],
         result: "u32",
@@ -20,26 +15,6 @@ const { symbols } = dlopen(resolveLib(), {
     dispose: {
         parameters: ["u32"],
         result: "void",
-        nonblocking: false,
-    },
-    set_default_programs: {
-        parameters: ["u32"],
-        result: "pointer",
-        nonblocking: false,
-    },
-    set_precompiles: {
-        parameters: ["u32"],
-        result: "pointer",
-        nonblocking: false,
-    },
-    set_builtins: {
-        parameters: ["u32"],
-        result: "pointer",
-        nonblocking: false,
-    },
-    set_sysvars: {
-        parameters: ["u32"],
-        result: "pointer",
         nonblocking: false,
     },
     latest_blockhash: {
@@ -58,6 +33,11 @@ const { symbols } = dlopen(resolveLib(), {
         nonblocking: false,
     },
     get_account: {
+        parameters: ["u32", "buffer", "usize"],
+        result: "pointer",
+        nonblocking: false,
+    },
+    get_program_accounts: {
         parameters: ["u32", "buffer", "usize"],
         result: "pointer",
         nonblocking: false,
@@ -354,10 +334,8 @@ function unwrapOptionalValue<T>(result: {
 export class LiteSvm {
     #handle: number;
 
-    constructor(opts: { basic?: boolean } = {}) {
-        this.#handle = opts.basic
-            ? symbols.create_default()
-            : symbols.create_basic();
+    constructor() {
+        this.#handle = symbols.create_basic();
     }
 
     dispose(): void {
@@ -384,26 +362,8 @@ export class LiteSvm {
         unwrapVoid(decodeResult(symbols.expire_blockhash(this.#handle)));
     }
 
-    setDefaultPrograms(): void {
-        unwrapVoid(decodeResult(symbols.set_default_programs(this.#handle)));
-    }
-
-    setPrecompiles(): void {
-        unwrapVoid(decodeResult(symbols.set_precompiles(this.#handle)));
-    }
-
-    setBuiltins(): void {
-        unwrapVoid(decodeResult(symbols.set_builtins(this.#handle)));
-    }
-
-    setSysvars(): void {
-        unwrapVoid(decodeResult(symbols.set_sysvars(this.#handle)));
-    }
-
     airdrop(pubkey: Uint8Array, lamports: bigint | number): void {
-        const lamportNum = typeof lamports === "bigint"
-            ? Number(lamports)
-            : lamports;
+        const lamportNum = typeof lamports === "bigint" ? Number(lamports) : lamports;
         const pubkeyBuf = new Uint8Array(pubkey);
         unwrapVoid(
             decodeResult(
@@ -431,6 +391,21 @@ export class LiteSvm {
         );
         if (result.error) throw new Error(result.error);
         return convertAccountFromJson(result.value);
+    }
+
+    getProgramAccounts(programId: Uint8Array): { pubkey: Uint8Array; account: SerializableAccount }[] {
+        const buf = new Uint8Array(programId);
+        const result = decodeResult<{
+            value?: [number[], SerializableAccountJson][] | null;
+            error?: string | null;
+        }>(
+            symbols.get_program_accounts(this.#handle, buf, BigInt(buf.byteLength)),
+        );
+        if (result.error) throw new Error(result.error);
+        return (result.value ?? []).map(([pk, account]) => ({
+            pubkey: Uint8Array.from(pk),
+            account: convertAccountFromJson(account)!,
+        }));
     }
 
     setAccount(pubkey: Uint8Array, account: SerializableAccount): void {

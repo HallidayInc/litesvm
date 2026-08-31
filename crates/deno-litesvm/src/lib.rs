@@ -14,7 +14,7 @@ use {
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::Clock,
     solana_epoch_schedule::EpochSchedule,
-    solana_pubkey::Pubkey,
+    solana_address::Address as Pubkey,
     solana_signature::Signature,
     solana_transaction::{versioned::VersionedTransaction, Transaction},
     std::alloc::{alloc, Layout},
@@ -205,14 +205,6 @@ impl From<SerializableAccount> for AccountSharedData {
 }
 
 #[deno_bindgen]
-pub fn create_default() -> u32 {
-    let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-    let mut map = INSTANCES.lock().expect("mutex poisoned");
-    map.insert(id, LiteSVM::default());
-    id
-}
-
-#[deno_bindgen]
 pub fn create_basic() -> u32 {
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
     let mut map = INSTANCES.lock().expect("mutex poisoned");
@@ -225,42 +217,6 @@ pub fn dispose(handle: u32) {
     if let Ok(mut map) = INSTANCES.lock() {
         map.remove(&handle);
     }
-}
-
-#[deno_bindgen]
-pub fn set_default_programs(handle: u32) -> *const u8 {
-    let result = into_operation_result(with_instance_mut(handle, |svm| {
-        svm.set_default_programs();
-        Ok(())
-    }));
-    serialize_to_ptr(&result)
-}
-
-#[deno_bindgen]
-pub fn set_precompiles(handle: u32) -> *const u8 {
-    let result = into_operation_result(with_instance_mut(handle, |svm| {
-        svm.set_precompiles();
-        Ok(())
-    }));
-    serialize_to_ptr(&result)
-}
-
-#[deno_bindgen]
-pub fn set_builtins(handle: u32) -> *const u8 {
-    let result = into_operation_result(with_instance_mut(handle, |svm| {
-        svm.set_builtins();
-        Ok(())
-    }));
-    serialize_to_ptr(&result)
-}
-
-#[deno_bindgen]
-pub fn set_sysvars(handle: u32) -> *const u8 {
-    let result = into_operation_result(with_instance_mut(handle, |svm| {
-        svm.set_sysvars();
-        Ok(())
-    }));
-    serialize_to_ptr(&result)
 }
 
 #[deno_bindgen]
@@ -310,6 +266,44 @@ pub fn get_account(handle: u32, pubkey: &[u8]) -> *const u8 {
             AccountResult { value, error }
         }
         Err(error) => AccountResult {
+            value: None,
+            error: Some(error),
+        },
+    };
+    serialize_to_ptr(&result)
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct ProgramAccountsResult {
+    pub value: Option<Vec<(Vec<u8>, SerializableAccount)>>,
+    pub error: Option<String>,
+}
+
+#[deno_bindgen]
+pub fn get_program_accounts(handle: u32, program_id: &[u8]) -> *const u8 {
+    let result = match convert_pubkey(program_id) {
+        Ok(pk) => {
+            match with_instance_mut(handle, |svm| {
+                Ok(svm
+                    .get_program_accounts(&pk)
+                    .into_iter()
+                    .map(|(address, account)| {
+                        let shared: AccountSharedData = account.into();
+                        (address.to_bytes().to_vec(), SerializableAccount::from(shared))
+                    })
+                    .collect::<Vec<_>>())
+            }) {
+                Ok(value) => ProgramAccountsResult {
+                    value: Some(value),
+                    error: None,
+                },
+                Err(error) => ProgramAccountsResult {
+                    value: None,
+                    error: Some(error),
+                },
+            }
+        }
+        Err(error) => ProgramAccountsResult {
             value: None,
             error: Some(error),
         },
@@ -590,17 +584,3 @@ pub struct AccountKeysResult {
     pub error: Option<String>,
 }
 
-#[deno_bindgen]
-pub fn get_all_account_keys(handle: u32) -> *const u8 {
-    let (value, error) = wrap_value(with_instance_mut(handle, |svm| {
-        let keys: Vec<[u8; 32]> = svm
-            .accounts_db()
-            .inner
-            .keys()
-            .map(|pk| pk.to_bytes())
-            .collect();
-        Ok(keys)
-    }));
-    let result = AccountKeysResult { value, error };
-    serialize_to_ptr(&result)
-}
