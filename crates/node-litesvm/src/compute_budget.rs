@@ -11,7 +11,7 @@ pub struct ComputeBudget(pub(crate) ComputeBudgetOriginal);
 impl ComputeBudget {
     #[napi(constructor)]
     pub fn new() -> Self {
-        Self(ComputeBudgetOriginal::new_with_defaults(false, false))
+        Self(ComputeBudgetOriginal::new_with_defaults(false))
     }
 
     #[napi(getter)]
@@ -266,19 +266,19 @@ impl ComputeBudget {
     }
     #[napi(setter)]
     pub fn set_alt_bn128_addition_cost(&mut self, val: BigInt) -> Result<()> {
-        Ok(self.0.alt_bn128_addition_cost = bigint_to_u64(&val)?)
+        Ok(self.0.alt_bn128_g1_addition_cost = bigint_to_u64(&val)?)
     }
     #[napi(getter)]
     pub fn alt_bn128_addition_cost(&self) -> u64 {
-        self.0.alt_bn128_addition_cost
+        self.0.alt_bn128_g1_addition_cost
     }
     #[napi(setter)]
     pub fn set_alt_bn128_multiplication_cost(&mut self, val: BigInt) -> Result<()> {
-        Ok(self.0.alt_bn128_multiplication_cost = bigint_to_u64(&val)?)
+        Ok(self.0.alt_bn128_g1_multiplication_cost = bigint_to_u64(&val)?)
     }
     #[napi(getter)]
     pub fn alt_bn128_multiplication_cost(&self) -> u64 {
-        self.0.alt_bn128_multiplication_cost
+        self.0.alt_bn128_g1_multiplication_cost
     }
     #[napi(setter)]
     pub fn set_alt_bn128_pairing_one_pair_cost_first(&mut self, val: BigInt) -> Result<()> {
@@ -295,22 +295,6 @@ impl ComputeBudget {
     #[napi(getter)]
     pub fn alt_bn128_pairing_one_pair_cost_other(&self) -> u64 {
         self.0.alt_bn128_pairing_one_pair_cost_other
-    }
-    #[napi(setter)]
-    pub fn set_big_modular_exponentiation_base_cost(&mut self, val: BigInt) -> Result<()> {
-        Ok(self.0.big_modular_exponentiation_base_cost = bigint_to_u64(&val)?)
-    }
-    #[napi(getter)]
-    pub fn big_modular_exponentiation_base_cost(&self) -> u64 {
-        self.0.big_modular_exponentiation_base_cost
-    }
-    #[napi(setter)]
-    pub fn set_big_modular_exponentiation_cost_divisor(&mut self, val: BigInt) -> Result<()> {
-        Ok(self.0.big_modular_exponentiation_cost_divisor = bigint_to_u64(&val)?)
-    }
-    #[napi(getter)]
-    pub fn big_modular_exponentiation_cost_divisor(&self) -> u64 {
-        self.0.big_modular_exponentiation_cost_divisor
     }
     #[napi(setter)]
     pub fn set_poseidon_cost_coefficient_a(&mut self, val: BigInt) -> Result<()> {

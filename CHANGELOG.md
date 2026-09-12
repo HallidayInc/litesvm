@@ -2,6 +2,117 @@
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-24
+
+### Added
+
+- Support V1 transactions, with compute budget and prioritization data taken from the transaction config instead of only from compute budget instructions ([#399](https://github.com/LiteSVM/litesvm/pull/399)).
+
+### Changed
+
+- Bump to Agave 4.2 ([#399](https://github.com/LiteSVM/litesvm/pull/399)).
+- Bump the Agave crates to 4.2.1 and tilde-pin `solana-svm-transaction` to the 4.2 line, so it can no longer drift ahead of the rest of the Agave graph ([#408](https://github.com/LiteSVM/litesvm/pull/408)).
+- Cut redundant work out of the transaction path: the rent sysvar is read from the sysvar cache instead of being deserialized, pre-transaction rent states are captured during account loading instead of re-read afterwards, and transaction history is only cloned when history is enabled ([#407](https://github.com/LiteSVM/litesvm/pull/407)).
+
+### Fixed
+
+- Preserve configured epoch stakes across persistence snapshot round trips ([#403](https://github.com/LiteSVM/litesvm/pull/403)).
+- Preserve readability of V1 persistence snapshots after the Solana 4.2 wire-format change ([#403](https://github.com/LiteSVM/litesvm/pull/403)).
+- Align the rent epoch when loading transaction accounts ([#402](https://github.com/LiteSVM/litesvm/pull/402)).
+- Return an error when the loaded account data size exceeds the transaction allowance ([#399](https://github.com/LiteSVM/litesvm/pull/399)).
+- Clear x87 FPU state after transaction execution ([#398](https://github.com/LiteSVM/litesvm/pull/398)).
+- Update the bundled mainnet feature set to match Solana mainnet-beta as of 2026-08-24 ([#405](https://github.com/LiteSVM/litesvm/pull/405)).
+
+## [0.15.2] - 2026-07-31
+
+### Changed
+
+- Don't clone the account store when writing the clock sysvar, so `set_sysvar::<Clock>()` no longer costs O(number of accounts) ([#391](https://github.com/LiteSVM/litesvm/pull/391)).
+
+### Fixed
+
+- Update the bundled mainnet feature set to match Solana mainnet-beta as of 2026-07-29 ([#393](https://github.com/LiteSVM/litesvm/pull/393)).
+
+## [0.15.1] - 2026-07-27
+
+### Fixed
+
+- Update activation slots for the bundled mainnet feature set to match Solana mainnet-beta as of 2026-07-27 ([#385](https://github.com/LiteSVM/litesvm/pull/385), [#389](https://github.com/LiteSVM/litesvm/pull/389)).
+- Pin the Solana crates that must stay in lockstep with Agave to tilde requirements, so a semver-compatible upgrade of one can no longer break the build ([#388](https://github.com/LiteSVM/litesvm/pull/388)).
+
+## [0.15.0] - 2026-07-22
+
+### Added
+
+- Add `LiteSVM::{set_epoch_stake, set_epoch_stakes, epoch_total_stake, epoch_stake}` so tests can configure values returned by the `sol_get_epoch_stake` syscall (previously always `0`). The per-vote map is the source of truth; the cluster total is maintained as its checked sum (overwrites adjust the total, overflow returns `LiteSVMError::EpochStakeOverflow`) ([#383](https://github.com/LiteSVM/litesvm/pull/383)).
+
+### Fixed
+
+- Validate account locks even when sigverify is disabled, so transactions with duplicate or too many account locks are rejected consistently ([#381](https://github.com/LiteSVM/litesvm/pull/381)).
+
+## [0.14.0] - 2026-07-13
+
+### Added
+
+- Add the `litesvm-cpi-tree` crate for parsing and rendering Solana transaction logs as a CPI call tree ([#349](https://github.com/LiteSVM/litesvm/pull/349)).
+- Add activation slots to the active feature set metadata ([#378](https://github.com/LiteSVM/litesvm/pull/378)).
+- Add `LiteSVM::get_program_accounts` to return all accounts owned by a given program, together with their addresses ([#370](https://github.com/LiteSVM/litesvm/pull/370)).
+
+### Changed
+
+- Bump to Agave 4.1 ([#373](https://github.com/LiteSVM/litesvm/pull/373)).
+- Replace the bundled SPL Memo v3 program with SPL Memo v4 ([#375](https://github.com/LiteSVM/litesvm/pull/375)).
+- Use `wincode` for sysvar serialization ([#376](https://github.com/LiteSVM/litesvm/pull/376)).
+
+### Fixed
+
+- Only run the rent check on successful transactions, so a failed transaction keeps its original error instead of `InsufficientFundsForRent` ([#371](https://github.com/LiteSVM/litesvm/pull/371)).
+
+## [0.13.1] - 2026-07-01
+
+### Fixed
+
+- Update the bundled mainnet feature set to match Solana mainnet-beta as of 2026-06-30 ([#367](https://github.com/LiteSVM/litesvm/pull/367)).
+- Relax workspace and persistence dependency constraints for better compatibility ([#368](https://github.com/LiteSVM/litesvm/pull/368)).
+- Loosen `solana-address` version constraint ([#363](https://github.com/LiteSVM/litesvm/pull/363)).
+
+## [0.13.0] - 2026-06-19
+
+### Added
+
+- Add SBPF debugger support with GDB remote stub and trace filtering ([#354](https://github.com/LiteSVM/litesvm/pull/354)).
+- Add a script to update mainnet features ([#357](https://github.com/LiteSVM/litesvm/pull/357)).
+
+### Changed
+
+- Bump to Agave 4.0 ([#322](https://github.com/LiteSVM/litesvm/pull/322)).
+- Update mainnet feature set ([#353](https://github.com/LiteSVM/litesvm/pull/353)).
+- Update SPL token to version 2022-11.0.0 ([#358](https://github.com/LiteSVM/litesvm/pull/358)).
+- Allow pre-release version for node ([#356](https://github.com/LiteSVM/litesvm/pull/356)).
+
+### Fixed
+
+- Add missing mainnet features ([#355](https://github.com/LiteSVM/litesvm/pull/355)).
+- Fix stake program panics and failures ([#346](https://github.com/LiteSVM/litesvm/pull/346)).
+- Update outdated mainnet features date ([#339](https://github.com/LiteSVM/litesvm/pull/339)).
+
+## [0.12.0] - 2026-05-13
+
+### Added
+
+- Add mainnet feature set support in `LiteSVM` ([#327](https://github.com/LiteSVM/litesvm/pull/327)).
+- Add the `litesvm-persistence` crate for saving and loading LiteSVM state snapshots ([#319](https://github.com/LiteSVM/litesvm/pull/319)).
+- Include the `p-token` feature ([#336](https://github.com/LiteSVM/litesvm/pull/336)).
+
+### Changed
+
+- Refresh LiteSVM documentation and README with additional usage information ([#328](https://github.com/LiteSVM/litesvm/pull/328)).
+
+### Fixed
+
+- Use the native loader id when adding builtins ([#334](https://github.com/LiteSVM/litesvm/pull/334)).
+- Remove the config program from the default program set ([#331](https://github.com/LiteSVM/litesvm/pull/331)).
+
 ## [0.11.0] - 2026-03-30
 
 ### Added
@@ -212,7 +323,15 @@
 
 - Initial release.
 
-[Unreleased]: https://github.com/LiteSVM/litesvm/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/LiteSVM/litesvm/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/LiteSVM/litesvm/compare/v0.15.2...v0.16.0
+[0.15.2]: https://github.com/LiteSVM/litesvm/compare/v0.15.1...v0.15.2
+[0.15.1]: https://github.com/LiteSVM/litesvm/compare/v0.15.0...v0.15.1
+[0.15.0]: https://github.com/LiteSVM/litesvm/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/LiteSVM/litesvm/compare/v0.13.1...v0.14.0
+[0.13.1]: https://github.com/LiteSVM/litesvm/compare/v0.13.0...v0.13.1
+[0.13.0]: https://github.com/LiteSVM/litesvm/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/LiteSVM/litesvm/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/LiteSVM/litesvm/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/LiteSVM/litesvm/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/LiteSVM/litesvm/compare/v0.9.0...v0.9.1

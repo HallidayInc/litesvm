@@ -1,12 +1,15 @@
 use {
     litesvm::LiteSVM,
+    solana_account::Account,
     solana_address::Address,
+    solana_instruction::error::InstructionError,
     solana_keypair::Keypair,
     solana_message::Message,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_signer::Signer,
     solana_system_interface::instruction::{allocate, create_account, transfer},
     solana_transaction::Transaction,
+    solana_transaction_error::TransactionError,
 };
 
 #[test_log::test]
@@ -45,7 +48,7 @@ fn system_transfer() {
 }
 
 #[test_log::test]
-fn system_create_account() {
+fn rent_epoch_created_account_matches_svm() {
     let from_keypair = Keypair::new();
     let new_account = Keypair::new();
     let from = from_keypair.pubkey();
@@ -76,6 +79,37 @@ fn system_create_account() {
     assert_eq!(account.lamports, rent_amount);
     assert_eq!(account.data.len(), space);
     assert_eq!(account.owner, solana_sdk_ids::system_program::id());
+    assert_eq!(account.rent_epoch, u64::MAX);
+}
+
+#[test_log::test]
+fn rent_epoch_existing_writable_rent_exempt_account_matches_svm() {
+    let payer = Keypair::new();
+    let recipient = Address::new_unique();
+    let mut svm = LiteSVM::new();
+    svm.airdrop(&payer.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    svm.set_account(
+        recipient,
+        Account {
+            lamports: svm.minimum_balance_for_rent_exemption(0),
+            owner: solana_sdk_ids::system_program::id(),
+            rent_epoch: 7,
+            ..Account::default()
+        },
+    )
+    .unwrap();
+
+    let tx = Transaction::new(
+        &[&payer],
+        Message::new(
+            &[transfer(&payer.pubkey(), &recipient, 1)],
+            Some(&payer.pubkey()),
+        ),
+        svm.latest_blockhash(),
+    );
+    svm.send_transaction(tx).unwrap();
+
+    assert_eq!(svm.get_account(&recipient).unwrap().rent_epoch, u64::MAX);
 }
 
 #[test_log::test]
@@ -98,6 +132,65 @@ fn system_allocate_account() {
     svm.send_transaction(tx).unwrap();
 
     assert!(svm.get_account(&new_account).is_none());
+}
+
+#[test_log::test]
+fn test_rent_check_does_not_override_program_error() {
+    let from_keypair = Keypair::new();
+    let from = from_keypair.pubkey();
+    let new_account = Keypair::new();
+    let owner = Address::new_unique();
+
+    let mut svm = LiteSVM::new();
+    svm.airdrop(&from, 10 * LAMPORTS_PER_SOL).unwrap();
+
+    // The first instruction creates an underfunded (rent-paying) data account,
+    // which on its own would trip the post-execution rent check.
+    let ix1 = create_account(&from, &new_account.pubkey(), 1, 10, &owner);
+    // The second instruction creates the same account again and fails with
+    // `SystemError::AccountAlreadyInUse`, unrelated to rent.
+    let ix2 = create_account(&from, &new_account.pubkey(), 1, 10, &owner);
+
+    let tx = Transaction::new(
+        &[&from_keypair, &new_account],
+        Message::new(&[ix1, ix2], Some(&from)),
+        svm.latest_blockhash(),
+    );
+    let tx_res = svm.send_transaction(tx);
+
+    // The failed transaction must surface its original instruction error, not
+    // `TransactionError::InsufficientFundsForRent` from the rent check on
+    // account state that is discarded anyway.
+    assert_eq!(
+        tx_res.unwrap_err().err,
+        TransactionError::InstructionError(1, InstructionError::Custom(0))
+    );
+}
+
+#[test_log::test]
+fn test_rent_check_still_fails_successful_transaction() {
+    let from_keypair = Keypair::new();
+    let from = from_keypair.pubkey();
+    let new_account = Keypair::new();
+    let owner = Address::new_unique();
+
+    let mut svm = LiteSVM::new();
+    svm.airdrop(&from, 10 * LAMPORTS_PER_SOL).unwrap();
+
+    // A single instruction that succeeds but leaves the new account
+    // rent-paying must still fail the post-execution rent check.
+    let instruction = create_account(&from, &new_account.pubkey(), 1, 10, &owner);
+    let tx = Transaction::new(
+        &[&from_keypair, &new_account],
+        Message::new(&[instruction], Some(&from)),
+        svm.latest_blockhash(),
+    );
+    let tx_res = svm.send_transaction(tx);
+
+    assert_eq!(
+        tx_res.unwrap_err().err,
+        TransactionError::InsufficientFundsForRent { account_index: 1 }
+    );
 }
 
 #[test_log::test]

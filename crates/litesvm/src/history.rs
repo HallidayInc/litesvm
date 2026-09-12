@@ -21,6 +21,10 @@ impl TransactionHistory {
         self.0.get(signature)
     }
 
+    pub fn is_enabled(&self) -> bool {
+        self.0.capacity() != 0
+    }
+
     pub fn add_new_transaction(&mut self, signature: Signature, result: TransactionResult) {
         let capacity = self.0.capacity();
         if capacity != 0 {
@@ -33,5 +37,22 @@ impl TransactionHistory {
 
     pub fn check_transaction(&self, signature: &Signature) -> bool {
         self.0.contains_key(signature)
+    }
+
+    #[cfg(feature = "persistence-internal")]
+    pub fn entries(&self) -> &IndexMap<Signature, TransactionResult> {
+        &self.0
+    }
+
+    #[cfg(feature = "persistence-internal")]
+    pub fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
+
+    #[cfg(feature = "persistence-internal")]
+    pub fn from_entries(entries: IndexMap<Signature, TransactionResult>, capacity: usize) -> Self {
+        let mut history = TransactionHistory(entries);
+        history.set_capacity(capacity);
+        history
     }
 }

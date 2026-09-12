@@ -1,9 +1,6 @@
 name: node-docs
 
-on:
-  push:
-    branches: [master]
-  workflow_dispatch:
+on: workflow_dispatch
 
 permissions:
   contents: read

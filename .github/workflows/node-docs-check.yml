@@ -1,18 +1,6 @@
 name: node-docs-check
 
-on:
-  push:
-    branches: [master]
-    paths-ignore:
-      - LICENSE
-      - '**/*.gitignore'
-      - .editorconfig
-  pull_request:
-    branches: [master]
-    paths-ignore:
-      - LICENSE
-      - '**/*.gitignore'
-      - .editorconfig
+on: workflow_dispatch
 
 jobs:
   build:

@@ -1,0 +1,19 @@
+[package]
+name = "deno_bindgen_cli"
+description = "Workspace-local CLI for generating deno_bindgen bindings without hanging on large builds"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cargo = "0.82"
+cargo_metadata = "0.18"
+dlopen2 = "0.6"
+deno_bindgen_ir = "0.1.0"
+structopt = "0.3"
+
+[[bin]]
+name = "deno_bindgen_cli"
+path = "main.rs"
