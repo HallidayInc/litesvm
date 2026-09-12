@@ -573,7 +573,7 @@ export class RpcClient implements Client {
                 }
             }
 
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            await new Promise((resolve) => setTimeout(resolve, 250));
         }
 
         throw new Error(
