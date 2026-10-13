@@ -15,6 +15,7 @@ use {
     solana_clock::Clock,
     solana_epoch_schedule::EpochSchedule,
     solana_address::Address as Pubkey,
+    solana_rent::Rent,
     solana_signature::Signature,
     solana_transaction::{versioned::VersionedTransaction, Transaction},
     std::alloc::{alloc, Layout},
@@ -368,7 +369,7 @@ fn deserialize_transaction(tx_bytes: &[u8]) -> Result<Transaction, String> {
 }
 
 fn deserialize_versioned_transaction(tx_bytes: &[u8]) -> Result<VersionedTransaction, String> {
-    deserialize(tx_bytes).map_err(|e| format!("Failed to decode versioned transaction: {e}"))
+    wincode::deserialize(tx_bytes).map_err(|e| format!("Failed to decode versioned transaction: {e}"))
 }
 
 #[deno_bindgen]
@@ -500,6 +501,54 @@ pub fn get_sysvar_clock(handle: u32) -> *const u8 {
         })
     }));
     let result = ClockInfoResult { value, error };
+    serialize_to_ptr(&result)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RentInfo {
+    pub lamports_per_byte: u64,
+    pub exemption_threshold: f64,
+    pub burn_percent: u8,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct RentInfoResult {
+    pub value: Option<RentInfo>,
+    pub error: Option<String>,
+}
+
+#[deno_bindgen]
+#[allow(deprecated)]
+pub fn set_sysvar_rent(
+    handle: u32,
+    lamports_per_byte: u64,
+    exemption_threshold: f64,
+    burn_percent: u8,
+) -> *const u8 {
+    let result = into_operation_result(with_instance_mut(handle, |svm| {
+        let rent = Rent {
+            lamports_per_byte,
+            exemption_threshold: exemption_threshold.to_le_bytes(),
+            burn_percent,
+        };
+        svm.set_sysvar::<Rent>(&rent);
+        Ok(())
+    }));
+    serialize_to_ptr(&result)
+}
+
+#[deno_bindgen]
+#[allow(deprecated)]
+pub fn get_sysvar_rent(handle: u32) -> *const u8 {
+    let (value, error) = wrap_value(with_instance_mut(handle, |svm| {
+        let rent: Rent = svm.get_sysvar();
+        Ok(RentInfo {
+            lamports_per_byte: rent.lamports_per_byte,
+            exemption_threshold: f64::from_le_bytes(rent.exemption_threshold),
+            burn_percent: rent.burn_percent,
+        })
+    }));
+    let result = RentInfoResult { value, error };
     serialize_to_ptr(&result)
 }
 

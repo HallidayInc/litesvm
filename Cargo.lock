@@ -3906,9 +3906,11 @@ dependencies = [
  "solana-clock",
  "solana-epoch-schedule",
  "solana-hash",
+ "solana-rent",
  "solana-signature",
  "solana-transaction",
  "solana-transaction-error",
+ "wincode",
 ]
 
 [[package]]
